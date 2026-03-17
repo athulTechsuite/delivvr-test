@@ -10,8 +10,8 @@
   
   /* Text colors */
   --theme-text-primary: #212529;
-  --theme-text-secondary: #6c757d;
-  --theme-text-tertiary: #adb5bd;
+  --theme-text-secondary: #495057;
+  --theme-text-tertiary: #6c757d;
   --theme-text-inverse: #ffffff;
   
   /* Brand colors */
@@ -25,12 +25,12 @@
   /* Status colors */
   --theme-success: #198754;
   --theme-success-hover: #157347;
-  --theme-warning: #ffc107;
-  --theme-warning-hover: #ffcd39;
+  --theme-warning: #b45309;
+  --theme-warning-hover: #92400e;
   --theme-danger: #dc3545;
   --theme-danger-hover: #bb2d3b;
-  --theme-info: #0dcaf0;
-  --theme-info-hover: #31d2f2;
+  --theme-info: #0369a1;
+  --theme-info-hover: #0284c7;
   
   /* Border colors */
   --theme-border-primary: #dee2e6;
@@ -66,32 +66,32 @@
   
   /* Text colors */
   --theme-text-primary: #ffffff;
-  --theme-text-secondary: #b3b3b3;
-  --theme-text-tertiary: #808080;
+  --theme-text-secondary: #d1d5db;
+  --theme-text-tertiary: #9ca3af;
   --theme-text-inverse: #1a1a1a;
   
   /* Brand colors - adjusted for dark theme */
-  --theme-primary: #4dabf7;
-  --theme-primary-hover: #339af0;
-  --theme-primary-active: #228be6;
-  --theme-secondary: #868e96;
-  --theme-secondary-hover: #adb5bd;
-  --theme-secondary-active: #ced4da;
+  --theme-primary: #60a5fa;
+  --theme-primary-hover: #3b82f6;
+  --theme-primary-active: #2563eb;
+  --theme-secondary: #9ca3af;
+  --theme-secondary-hover: #d1d5db;
+  --theme-secondary-active: #e5e7eb;
   
   /* Status colors - adjusted for dark theme */
-  --theme-success: #51cf66;
-  --theme-success-hover: #40c057;
-  --theme-warning: #ffd43b;
-  --theme-warning-hover: #fab005;
-  --theme-danger: #ff6b6b;
-  --theme-danger-hover: #fa5252;
-  --theme-info: #22d3ee;
-  --theme-info-hover: #06b6d4;
+  --theme-success: #34d399;
+  --theme-success-hover: #10b981;
+  --theme-warning: #fbbf24;
+  --theme-warning-hover: #f59e0b;
+  --theme-danger: #f87171;
+  --theme-danger-hover: #ef4444;
+  --theme-info: #38bdf8;
+  --theme-info-hover: #0ea5e9;
   
   /* Border colors */
   --theme-border-primary: #495057;
   --theme-border-secondary: #404040;
-  --theme-border-focus: #4dabf7;
+  --theme-border-focus: #60a5fa;
   
   /* Shadow colors */
   --theme-shadow-sm: rgba(0, 0, 0, 0.2);
@@ -108,7 +108,7 @@
   /* Loading and skeleton colors */
   --theme-skeleton-base: #404040;
   --theme-skeleton-highlight: #495057;
-  --theme-loading-spinner: #4dabf7;
+  --theme-loading-spinner: #60a5fa;
 }
 
 /* System theme preference handling */
@@ -122,29 +122,29 @@
     --theme-surface-elevated: #404040;
     
     --theme-text-primary: #ffffff;
-    --theme-text-secondary: #b3b3b3;
-    --theme-text-tertiary: #808080;
+    --theme-text-secondary: #d1d5db;
+    --theme-text-tertiary: #9ca3af;
     --theme-text-inverse: #1a1a1a;
     
-    --theme-primary: #4dabf7;
-    --theme-primary-hover: #339af0;
-    --theme-primary-active: #228be6;
-    --theme-secondary: #868e96;
-    --theme-secondary-hover: #adb5bd;
-    --theme-secondary-active: #ced4da;
+    --theme-primary: #60a5fa;
+    --theme-primary-hover: #3b82f6;
+    --theme-primary-active: #2563eb;
+    --theme-secondary: #9ca3af;
+    --theme-secondary-hover: #d1d5db;
+    --theme-secondary-active: #e5e7eb;
     
-    --theme-success: #51cf66;
-    --theme-success-hover: #40c057;
-    --theme-warning: #ffd43b;
-    --theme-warning-hover: #fab005;
-    --theme-danger: #ff6b6b;
-    --theme-danger-hover: #fa5252;
-    --theme-info: #22d3ee;
-    --theme-info-hover: #06b6d4;
+    --theme-success: #34d399;
+    --theme-success-hover: #10b981;
+    --theme-warning: #fbbf24;
+    --theme-warning-hover: #f59e0b;
+    --theme-danger: #f87171;
+    --theme-danger-hover: #ef4444;
+    --theme-info: #38bdf8;
+    --theme-info-hover: #0ea5e9;
     
     --theme-border-primary: #495057;
     --theme-border-secondary: #404040;
-    --theme-border-focus: #4dabf7;
+    --theme-border-focus: #60a5fa;
     
     --theme-shadow-sm: rgba(0, 0, 0, 0.2);
     --theme-shadow-md: rgba(0, 0, 0, 0.3);
@@ -158,7 +158,7 @@
     
     --theme-skeleton-base: #404040;
     --theme-skeleton-highlight: #495057;
-    --theme-loading-spinner: #4dabf7;
+    --theme-loading-spinner: #60a5fa;
   }
 }
 
