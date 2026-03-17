@@ -175,6 +175,99 @@ const authRateLimit = (maxAttempts = 5, windowMs = 15 * 60 * 1000) => {
   };
 };
 
+// Audit logging middleware for item management actions
+const auditItemManagement = (action) => {
+  return async (req, res, next) => {
+    // Store original res.json to capture response data
+    const originalJson = res.json.bind(res);
+    
+    res.json = function(body) {
+      // Only log successful operations (status 2xx)
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        setImmediate(async () => {
+          try {
+            const AuditLog = require('../models/AuditLog');
+            
+            // Prepare audit data
+            const auditData = {
+              userId: req.user?._id,
+              userName: req.user?.name || req.user?.email,
+              action: action,
+              resource: 'item',
+              resourceId: req.params.id || body.data?.id || body.data?._id,
+              details: {
+                method: req.method,
+                url: req.originalUrl,
+                userAgent: req.get('User-Agent'),
+                ip: req.ip || req.connection.remoteAddress,
+                timestamp: new Date()
+              },
+              metadata: {}
+            };
+
+            // Add specific details based on action
+            switch (action) {
+              case 'item_create':
+                auditData.details.itemData = {
+                  name: req.body.name,
+                  category: req.body.category,
+                  price: req.body.price
+                };
+                break;
+              case 'item_update':
+                auditData.details.itemId = req.params.id;
+                auditData.details.updatedFields = Object.keys(req.body);
+                break;
+              case 'item_delete':
+                auditData.details.itemId = req.params.id;
+                break;
+              case 'item_bulk_update':
+                auditData.details.itemIds = req.body.itemIds;
+                auditData.details.updatedFields = Object.keys(req.body.updateData || {});
+                break;
+              case 'item_bulk_delete':
+                auditData.details.itemIds = req.body.itemIds;
+                break;
+            }
+
+            // Save audit log
+            await AuditLog.create(auditData);
+          } catch (error) {
+            console.error('Audit logging failed:', error);
+            // Don't fail the request if audit logging fails
+          }
+        });
+      }
+      
+      return originalJson(body);
+    };
+
+    next();
+  };
+};
+
+// Middleware for admin item management permissions with enhanced validation
+const requireAdminItemAccess = async (req, res, next) => {
+  if (!req.user || req.user.role !== 'admin') {
+    return res.status(403).json({ 
+      success: false, 
+      message: 'Admin access required for item management' 
+    });
+  }
+
+  // Additional validation for bulk operations
+  if (req.body.itemIds && Array.isArray(req.body.itemIds)) {
+    if (req.body.itemIds.length > 100) {
+      return res.status(400).json({
+        success: false,
+        message: 'Bulk operations limited to 100 items at once'
+      });
+    }
+  }
+
+  next();
+};
+
 module.exports = {
   authenticateToken,
   authorizeRoles,
@@ -182,5 +275,7 @@ module.exports = {
   requireVendorOrAdmin,
   requireOwnershipOrAdmin,
   optionalAuth,
-  authRateLimit
+  authRateLimit,
+  auditItemManagement,
+  requireAdminItemAccess
 };

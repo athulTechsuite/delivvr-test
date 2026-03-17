@@ -111,6 +111,32 @@ const productSchema = new mongoose.Schema({
   slug: {
     type: String,
     unique: true
+  },
+  auditLog: [{
+    action: {
+      type: String,
+      enum: ['created', 'updated', 'deleted', 'stock_updated', 'activated', 'deactivated'],
+      required: true
+    },
+    performedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true
+    },
+    timestamp: {
+      type: Date,
+      default: Date.now
+    },
+    changes: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {}
+    },
+    ipAddress: String,
+    userAgent: String
+  }],
+  lastModifiedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
   }
 }, {
   timestamps: true,
@@ -125,6 +151,10 @@ productSchema.index({ name: 'text', description: 'text' });
 productSchema.index({ price: 1 });
 productSchema.index({ 'ratings.average': -1 });
 productSchema.index({ slug: 1 });
+productSchema.index({ sku: 1 });
+productSchema.index({ createdAt: -1 });
+productSchema.index({ updatedAt: -1 });
+productSchema.index({ 'auditLog.timestamp': -1 });
 
 // Virtual for checking if product is on sale
 productSchema.virtual('isOnSale').get(function() {
@@ -167,6 +197,154 @@ productSchema.pre('save', function(next) {
   }
   next();
 });
+
+// Method to log audit trail
+productSchema.methods.logAudit = function(action, performedBy, changes = {}, metadata = {}) {
+  this.auditLog.push({
+    action,
+    performedBy,
+    changes,
+    ipAddress: metadata.ipAddress,
+    userAgent: metadata.userAgent,
+    timestamp: new Date()
+  });
+  
+  this.lastModifiedBy = performedBy;
+  return this;
+};
+
+// Static method for admin dashboard - get all products with pagination and filters
+productSchema.statics.getForAdminDashboard = function(options = {}) {
+  const {
+    page = 1,
+    limit = 20,
+    sortBy = 'updatedAt',
+    sortOrder = 'desc',
+    search,
+    category,
+    vendor,
+    isActive,
+    minPrice,
+    maxPrice,
+    inStock
+  } = options;
+
+  const query = {};
+  
+  // Apply filters
+  if (search) {
+    query.$or = [
+      { name: { $regex: search, $options: 'i' } },
+      { description: { $regex: search, $options: 'i' } },
+      { sku: { $regex: search, $options: 'i' } },
+      { brand: { $regex: search, $options: 'i' } }
+    ];
+  }
+  
+  if (category) query.category = category;
+  if (vendor) query.vendor = vendor;
+  if (isActive !== undefined) query.isActive = isActive;
+  if (inStock !== undefined) {
+    query.stock = inStock ? { $gt: 0 } : { $lte: 0 };
+  }
+  
+  if (minPrice !== undefined || maxPrice !== undefined) {
+    query.price = {};
+    if (minPrice !== undefined) query.price.$gte = minPrice;
+    if (maxPrice !== undefined) query.price.$lte = maxPrice;
+  }
+
+  const sort = {};
+  sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
+
+  return this.find(query)
+    .populate('vendor', 'name email')
+    .populate('lastModifiedBy', 'name email')
+    .sort(sort)
+    .skip((page - 1) * limit)
+    .limit(parseInt(limit));
+};
+
+// Static method to get total count for admin dashboard
+productSchema.statics.getAdminDashboardCount = function(options = {}) {
+  const {
+    search,
+    category,
+    vendor,
+    isActive,
+    minPrice,
+    maxPrice,
+    inStock
+  } = options;
+
+  const query = {};
+  
+  if (search) {
+    query.$or = [
+      { name: { $regex: search, $options: 'i' } },
+      { description: { $regex: search, $options: 'i' } },
+      { sku: { $regex: search, $options: 'i' } },
+      { brand: { $regex: search, $options: 'i' } }
+    ];
+  }
+  
+  if (category) query.category = category;
+  if (vendor) query.vendor = vendor;
+  if (isActive !== undefined) query.isActive = isActive;
+  if (inStock !== undefined) {
+    query.stock = inStock ? { $gt: 0 } : { $lte: 0 };
+  }
+  
+  if (minPrice !== undefined || maxPrice !== undefined) {
+    query.price = {};
+    if (minPrice !== undefined) query.price.$gte = minPrice;
+    if (maxPrice !== undefined) query.price.$lte = maxPrice;
+  }
+
+  return this.countDocuments(query);
+};
+
+// Static method for bulk operations
+productSchema.statics.bulkUpdateByIds = function(productIds, updateData, performedBy, metadata = {}) {
+  return this.updateMany(
+    { _id: { $in: productIds } },
+    { 
+      ...updateData,
+      lastModifiedBy: performedBy,
+      $push: {
+        auditLog: {
+          action: 'updated',
+          performedBy,
+          changes: updateData,
+          ipAddress: metadata.ipAddress,
+          userAgent: metadata.userAgent,
+          timestamp: new Date()
+        }
+      }
+    }
+  );
+};
+
+// Static method for bulk delete
+productSchema.statics.bulkDeleteByIds = function(productIds, performedBy, metadata = {}) {
+  return this.updateMany(
+    { _id: { $in: productIds } },
+    { 
+      isActive: false,
+      lastModifiedBy: performedBy,
+      $push: {
+        auditLog: {
+          action: 'deleted',
+          performedBy,
+          changes: { isActive: false },
+          ipAddress: metadata.ipAddress,
+          userAgent: metadata.userAgent,
+          timestamp: new Date()
+        }
+      }
+    }
+  );
+};
 
 // Static method to get products by category
 productSchema.statics.getByCategory = function(category, options = {}) {
