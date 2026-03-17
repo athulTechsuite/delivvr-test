@@ -14,6 +14,15 @@ jest.mock('../../../utils/auditLogger');
 // Mock fetch for API calls
 global.fetch = jest.fn();
 
+// Mock WebSocket for real-time updates
+global.WebSocket = jest.fn().mockImplementation(() => ({
+  send: jest.fn(),
+  close: jest.fn(),
+  addEventListener: jest.fn(),
+  removeEventListener: jest.fn(),
+  readyState: WebSocket.OPEN
+}));
+
 // Test wrapper component
 const TestWrapper = ({ children }) => (
   <BrowserRouter>
@@ -118,6 +127,30 @@ describe('AdminDashboard', () => {
         );
       });
     });
+
+    it('should display correct pagination info', async () => {
+      const mockPaginatedResponse = {
+        products: mockProducts,
+        pagination: {
+          page: 2,
+          totalPages: 5,
+          total: 50,
+          limit: 10
+        }
+      };
+
+      fetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(mockPaginatedResponse)
+      });
+      
+      render(<AdminDashboard />, { wrapper: TestWrapper });
+      
+      await waitFor(() => {
+        expect(screen.getByText(/Page 2 of 5/)).toBeInTheDocument();
+        expect(screen.getByText(/Showing 11-20 of 50 items/)).toBeInTheDocument();
+      });
+    });
   });
 
   // TC-002: Upload functionality allows admins to add new items
@@ -192,6 +225,42 @@ describe('AdminDashboard', () => {
         expect(toast.success).toHaveBeenCalledWith('Item created successfully');
       });
     });
+
+    it('should handle file upload validation', async () => {
+      const user = userEvent.setup();
+      render(<AdminDashboard />, { wrapper: TestWrapper });
+      
+      const addButton = screen.getByRole('button', { name: /add item/i });
+      await user.click(addButton);
+      
+      // Try to upload invalid file type
+      const fileInput = screen.getByLabelText(/upload image/i);
+      const invalidFile = new File(['test'], 'test.txt', { type: 'text/plain' });
+      
+      await user.upload(fileInput, invalidFile);
+      
+      await waitFor(() => {
+        expect(screen.getByText(/only image files are allowed/i)).toBeInTheDocument();
+      });
+    });
+
+    it('should handle file upload size limit', async () => {
+      const user = userEvent.setup();
+      render(<AdminDashboard />, { wrapper: TestWrapper });
+      
+      const addButton = screen.getByRole('button', { name: /add item/i });
+      await user.click(addButton);
+      
+      // Create large file (5MB)
+      const largeFile = new File([new ArrayBuffer(5 * 1024 * 1024)], 'large.jpg', { type: 'image/jpeg' });
+      const fileInput = screen.getByLabelText(/upload image/i);
+      
+      await user.upload(fileInput, largeFile);
+      
+      await waitFor(() => {
+        expect(screen.getByText(/file size must be less than 2MB/i)).toBeInTheDocument();
+      });
+    });
   });
 
   // TC-003: Edit functionality enables modification of any item property
@@ -252,6 +321,32 @@ describe('AdminDashboard', () => {
           })
         );
         expect(toast.success).toHaveBeenCalledWith('Item updated successfully');
+      });
+    });
+
+    it('should validate edit form fields', async () => {
+      const user = userEvent.setup();
+      render(<AdminDashboard />, { wrapper: TestWrapper });
+      
+      await waitFor(() => {
+        expect(screen.getByText('Test Product 1')).toBeInTheDocument();
+      });
+      
+      // Open edit modal
+      const editButtons = screen.getAllByLabelText(/edit/i);
+      await user.click(editButtons[0]);
+      
+      // Clear required field
+      const nameField = screen.getByDisplayValue('Test Product 1');
+      await user.clear(nameField);
+      
+      // Try to submit
+      const saveButton = screen.getByRole('button', { name: /save/i });
+      await user.click(saveButton);
+      
+      // Verify validation error
+      await waitFor(() => {
+        expect(screen.getByText(/name is required/i)).toBeInTheDocument();
       });
     });
   });
@@ -333,6 +428,21 @@ describe('AdminDashboard', () => {
         expect(toast.success).toHaveBeenCalledWith('Item deleted successfully');
       });
     });
+
+    it('should show item details in confirmation dialog', async () => {
+      const user = userEvent.setup();
+      render(<AdminDashboard />, { wrapper: TestWrapper });
+      
+      await waitFor(() => {
+        expect(screen.getByText('Test Product 1')).toBeInTheDocument();
+      });
+      
+      const deleteButtons = screen.getAllByLabelText(/delete/i);
+      await user.click(deleteButtons[0]);
+      
+      // Verify item name appears in confirmation
+      expect(screen.getByText(/delete "Test Product 1"/i)).toBeInTheDocument();
+    });
   });
 
   // TC-005: Search and filter capabilities
@@ -398,6 +508,51 @@ describe('AdminDashboard', () => {
       await waitFor(() => {
         expect(fetch).toHaveBeenCalledWith(
           expect.stringMatching(/search=Test.*category=Electronics|category=Electronics.*search=Test/),
+          expect.any(Object)
+        );
+      });
+    });
+
+    it('should filter by status', async () => {
+      const user = userEvent.setup();
+      render(<AdminDashboard />, { wrapper: TestWrapper });
+      
+      await waitFor(() => {
+        expect(screen.getByText('Test Product 1')).toBeInTheDocument();
+      });
+      
+      const statusFilter = screen.getByRole('combobox', { name: /status/i });
+      await user.selectOptions(statusFilter, 'active');
+      
+      await waitFor(() => {
+        expect(fetch).toHaveBeenCalledWith(
+          expect.stringContaining('status=active'),
+          expect.any(Object)
+        );
+      });
+    });
+
+    it('should clear all filters', async () => {
+      const user = userEvent.setup();
+      render(<AdminDashboard />, { wrapper: TestWrapper });
+      
+      await waitFor(() => {
+        expect(screen.getByText('Test Product 1')).toBeInTheDocument();
+      });
+      
+      // Apply some filters
+      const searchInput = screen.getByPlaceholderText(/search items/i);
+      await user.type(searchInput, 'Test');
+      
+      // Clear filters
+      const clearButton = screen.getByRole('button', { name: /clear filters/i });
+      await user.click(clearButton);
+      
+      // Verify filters are cleared
+      expect(searchInput).toHaveValue('');
+      await waitFor(() => {
+        expect(fetch).toHaveBeenCalledWith(
+          expect.not.stringContaining('search='),
           expect.any(Object)
         );
       });
@@ -468,6 +623,194 @@ describe('AdminDashboard', () => {
         expect(toast.success).toHaveBeenCalledWith('2 items deleted successfully');
       });
     });
+
+    it('should support select all functionality', async () => {
+      const user = userEvent.setup();
+      render(<AdminDashboard />, { wrapper: TestWrapper });
+      
+      await waitFor(() => {
+        expect(screen.getByText('Test Product 1')).toBeInTheDocument();
+      });
+      
+      // Click select all checkbox
+      const selectAllCheckbox = screen.getAllByRole('checkbox')[0];
+      await user.click(selectAllCheckbox);
+      
+      // Verify all items are selected
+      const allCheckboxes = screen.getAllByRole('checkbox');
+      allCheckboxes.forEach(checkbox => {
+        expect(checkbox).toBeChecked();
+      });
+      
+      expect(screen.getByText(/2 items selected/i)).toBeInTheDocument();
+    });
+
+    it('should support bulk status update', async () => {
+      const user = userEvent.setup();
+      
+      fetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ success: true, updatedCount: 2 })
+      });
+      
+      render(<AdminDashboard />, { wrapper: TestWrapper });
+      
+      await waitFor(() => {
+        expect(screen.getByText('Test Product 1')).toBeInTheDocument();
+      });
+      
+      // Select items
+      const checkboxes = screen.getAllByRole('checkbox');
+      await user.click(checkboxes[1]);
+      await user.click(checkboxes[2]);
+      
+      // Open bulk actions
+      const bulkActionsButton = screen.getByRole('button', { name: /bulk actions/i });
+      await user.click(bulkActionsButton);
+      
+      // Select status update
+      const statusUpdateOption = screen.getByRole('menuitem', { name: /update status/i });
+      await user.click(statusUpdateOption);
+      
+      // Select new status
+      const statusSelect = screen.getByRole('combobox', { name: /new status/i });
+      await user.selectOptions(statusSelect, 'inactive');
+      
+      const confirmButton = screen.getByRole('button', { name: /update/i });
+      await user.click(confirmButton);
+      
+      await waitFor(() => {
+        expect(fetch).toHaveBeenCalledWith(
+          expect.stringContaining('/products/bulk-update'),
+          expect.objectContaining({
+            method: 'PUT',
+            body: expect.stringContaining('"status":"inactive"')
+          })
+        );
+      });
+    });
+  });
+
+  // TC-007: Real-time updates
+  describe('TC-007: Real-time Updates', () => {
+    it('should establish WebSocket connection for real-time updates', async () => {
+      render(<AdminDashboard />, { wrapper: TestWrapper });
+      
+      await waitFor(() => {
+        expect(WebSocket).toHaveBeenCalledWith(
+          expect.stringContaining('/ws/dashboard')
+        );
+      });
+    });
+
+    it('should handle real-time item creation updates', async () => {
+      const mockWebSocket = {
+        send: jest.fn(),
+        close: jest.fn(),
+        addEventListener: jest.fn(),
+        removeEventListener: jest.fn(),
+        readyState: WebSocket.OPEN
+      };
+      
+      WebSocket.mockImplementationOnce(() => mockWebSocket);
+      
+      render(<AdminDashboard />, { wrapper: TestWrapper });
+      
+      // Simulate WebSocket message for new item
+      const messageHandler = mockWebSocket.addEventListener.mock.calls
+        .find(call => call[0] === 'message')[1];
+      
+      act(() => {
+        messageHandler({
+          data: JSON.stringify({
+            type: 'ITEM_CREATED',
+            data: {
+              id: 3,
+              name: 'Real-time Product',
+              description: 'Added via WebSocket'
+            }
+          })
+        });
+      });
+      
+      await waitFor(() => {
+        expect(screen.getByText('Real-time Product')).toBeInTheDocument();
+      });
+    });
+
+    it('should handle real-time item updates', async () => {
+      const mockWebSocket = {
+        send: jest.fn(),
+        close: jest.fn(),
+        addEventListener: jest.fn(),
+        removeEventListener: jest.fn(),
+        readyState: WebSocket.OPEN
+      };
+      
+      WebSocket.mockImplementationOnce(() => mockWebSocket);
+      
+      render(<AdminDashboard />, { wrapper: TestWrapper });
+      
+      await waitFor(() => {
+        expect(screen.getByText('Test Product 1')).toBeInTheDocument();
+      });
+      
+      // Simulate WebSocket message for item update
+      const messageHandler = mockWebSocket.addEventListener.mock.calls
+        .find(call => call[0] === 'message')[1];
+      
+      act(() => {
+        messageHandler({
+          data: JSON.stringify({
+            type: 'ITEM_UPDATED',
+            data: {
+              id: 1,
+              name: 'Updated Product Name',
+              description: 'Updated description'
+            }
+          })
+        });
+      });
+      
+      await waitFor(() => {
+        expect(screen.getByText('Updated Product Name')).toBeInTheDocument();
+      });
+    });
+
+    it('should handle real-time item deletion', async () => {
+      const mockWebSocket = {
+        send: jest.fn(),
+        close: jest.fn(),
+        addEventListener: jest.fn(),
+        removeEventListener: jest.fn(),
+        readyState: WebSocket.OPEN
+      };
+      
+      WebSocket.mockImplementationOnce(() => mockWebSocket);
+      
+      render(<AdminDashboard />, { wrapper: TestWrapper });
+      
+      await waitFor(() => {
+        expect(screen.getByText('Test Product 1')).toBeInTheDocument();
+      });
+      
+      // Simulate WebSocket message for item deletion
+      const messageHandler = mockWebSocket.addEventListener.mock.calls
+        .find(call => call[0] === 'message')[1];
+      
+      act(() => {
+        messageHandler({
+          data: JSON.stringify({
+            type: 'ITEM_DELETED',
+            data: { id: 1 }
+          })
+        });
+      });
+      
+      await waitFor(() => {
+        expect(screen.queryByText('Test Product 1')).not.toBeInTheDocument();
+      });
+    });
   });
 
   // TC-008: Error handling and user feedback
@@ -527,10 +870,70 @@ describe('AdminDashboard', () => {
         expect(screen.getByText(/price must be positive/i)).toBeInTheDocument();
       });
     });
+
+    it('should handle server validation errors', async () => {
+      const user = userEvent.setup();
+      
+      // Mock server validation error
+      fetch.mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        json: () => Promise.resolve({
+          error: 'SKU already exists',
+          field: 'sku'
+        })
+      });
+      
+      render(<AdminDashboard />, { wrapper: TestWrapper });
+      
+      const addButton = screen.getByRole('button', { name: /add item/i });
+      await user.click(addButton);
+      
+      // Fill form
+      await user.type(screen.getByLabelText(/name/i), 'Test Product');
+      await user.type(screen.getByLabelText(/sku/i), 'EXISTING001');
+      
+      const submitButton = screen.getByRole('button', { name: /save/i });
+      await user.click(submitButton);
+      
+      await waitFor(() => {
+        expect(screen.getByText(/sku already exists/i)).toBeInTheDocument();
+      });
+    });
+
+    it('should handle network connectivity issues', async () => {
+      // Mock network error
+      fetch.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+      
+      render(<AdminDashboard />, { wrapper: TestWrapper });
+      
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith(
+          expect.stringContaining('Network error')
+        );
+      });
+      
+      // Should show retry button
+      expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
+    });
   });
 
   // TC-009: Responsive design
   describe('TC-009: Responsive Design', () => {
+    beforeEach(() => {
+      // Reset window size
+      Object.defineProperty(window, 'innerWidth', {
+        writable: true,
+        configurable: true,
+        value: 1024,
+      });
+      Object.defineProperty(window, 'innerHeight', {
+        writable: true,
+        configurable: true,
+        value: 768,
+      });
+    });
+
     it('should adapt layout for tablet viewport', async () => {
       // Mock tablet viewport
       Object.defineProperty(window, 'innerWidth', {
@@ -549,10 +952,88 @@ describe('AdminDashboard', () => {
       const dashboard = screen.getByTestId('admin-dashboard');
       expect(dashboard).toHaveClass('responsive-layout');
     });
+
+    it('should adapt layout for mobile viewport', async () => {
+      Object.defineProperty(window, 'innerWidth', {
+        writable: true,
+        configurable: true,
+        value: 375,
+      });
+      
+      // Trigger resize event
+      window.dispatchEvent(new Event('resize'));
+      
+      render(<AdminDashboard />, { wrapper: TestWrapper });
+      
+      await waitFor(() => {
+        expect(screen.getByText('Test Product 1')).toBeInTheDocument();
+      });
+      
+      // Mobile layout should stack items vertically
+      const dashboard = screen.getByTestId('admin-dashboard');
+      expect(dashboard).toHaveClass('mobile-layout');
+      
+      // Should have hamburger menu for filters
+      expect(screen.getByLabelText(/open filters menu/i)).toBeInTheDocument();
+    });
+
+    it('should make modals responsive', async () => {
+      const user = userEvent.setup();
+      
+      // Set mobile viewport
+      Object.defineProperty(window, 'innerWidth', {
+        writable: true,
+        configurable: true,
+        value: 375,
+      });
+      
+      render(<AdminDashboard />, { wrapper: TestWrapper });
+      
+      await waitFor(() => {
+        expect(screen.getByText('Test Product 1')).toBeInTheDocument();
+      });
+      
+      // Open add modal
+      const addButton = screen.getByRole('button', { name: /add item/i });
+      await user.click(addButton);
+      
+      // Modal should be full-screen on mobile
+      const modal = screen.getByRole('dialog');
+      expect(modal).toHaveClass('mobile-fullscreen');
+    });
+
+    it('should handle touch interactions on mobile', async () => {
+      Object.defineProperty(window, 'innerWidth', {
+        writable: true,
+        configurable: true,
+        value: 375,
+      });
+      
+      render(<AdminDashboard />, { wrapper: TestWrapper });
+      
+      await waitFor(() => {
+        expect(screen.getByText('Test Product 1')).toBeInTheDocument();
+      });
+      
+      // Should have touch-friendly button sizes
+      const buttons = screen.getAllByRole('button');
+      buttons.forEach(button => {
+        const styles = window.getComputedStyle(button);
+        const minHeight = parseInt(styles.minHeight);
+        expect(minHeight).toBeGreaterThanOrEqual(44); // 44px minimum touch target
+      });
+    });
   });
 
   // TC-010: Audit trail logging
   describe('TC-010: Audit Trail Logging', () => {
+    beforeEach(() => {
+      const mockAuditLogger = require('../../../utils/auditLogger');
+      mockAuditLogger.logItemAction = jest.fn();
+      mockAuditLogger.logBulkAction = jest.fn();
+      mockAuditLogger.logUserAction = jest.fn();
+    });
+
     it('should log item creation actions', async () => {
       const user = userEvent.setup();
       const mockAuditLogger = require('../../../utils/auditLogger');
@@ -581,6 +1062,164 @@ describe('AdminDashboard', () => {
           expect.any(String),
           expect.objectContaining({
             itemName: 'Audit Test Product',
+            action: 'Item created'
+          })
+        );
+      });
+    });
+
+    it('should log item update actions', async () => {
+      const user = userEvent.setup();
+      const mockAuditLogger = require('../../../utils/auditLogger');
+      
+      render(<AdminDashboard />, { wrapper: TestWrapper });
+      
+      await waitFor(() => {
+        expect(screen.getByText('Test Product 1')).toBeInTheDocument();
+      });
+      
+      // Edit item
+      const editButtons = screen.getAllByLabelText(/edit/i);
+      await user.click(editButtons[0]);
+      
+      const nameField = screen.getByDisplayValue('Test Product 1');
+      await user.clear(nameField);
+      await user.type(nameField, 'Updated Name');
+      
+      const saveButton = screen.getByRole('button', { name: /save/i });
+      await user.click(saveButton);
+      
+      await waitFor(() => {
+        expect(mockAuditLogger.logItemAction).toHaveBeenCalledWith(
+          'UPDATE',
+          expect.any(String),
+          expect.any(String),
+          '1',
+          expect.objectContaining({
+            previousData: expect.objectContaining({ name: 'Test Product 1' }),
+            newData: expect.objectContaining({ name: 'Updated Name' }),
+            action: 'Item updated'
+          })
+        );
+      });
+    });
+
+    it('should log item deletion actions', async () => {
+      const user = userEvent.setup();
+      const mockAuditLogger = require('../../../utils/auditLogger');
+      
+      render(<AdminDashboard />, { wrapper: TestWrapper });
+      
+      await waitFor(() => {
+        expect(screen.getByText('Test Product 1')).toBeInTheDocument();
+      });
+      
+      // Delete item
+      const deleteButtons = screen.getAllByLabelText(/delete/i);
+      await user.click(deleteButtons[0]);
+      
+      const confirmButton = screen.getByRole('button', { name: /confirm/i });
+      await user.click(confirmButton);
+      
+      await waitFor(() => {
+        expect(mockAuditLogger.logItemAction).toHaveBeenCalledWith(
+          'DELETE',
+          expect.any(String),
+          expect.any(String),
+          '1',
+          expect.objectContaining({
+            itemName: 'Test Product 1',
+            action: 'Item deleted'
+          })
+        );
+      });
+    });
+
+    it('should log bulk operations', async () => {
+      const user = userEvent.setup();
+      const mockAuditLogger = require('../../../utils/auditLogger');
+      
+      render(<AdminDashboard />, { wrapper: TestWrapper });
+      
+      await waitFor(() => {
+        expect(screen.getByText('Test Product 1')).toBeInTheDocument();
+      });
+      
+      // Select items for bulk operation
+      const checkboxes = screen.getAllByRole('checkbox');
+      await user.click(checkboxes[1]);
+      await user.click(checkboxes[2]);
+      
+      // Perform bulk delete
+      const bulkActionsButton = screen.getByRole('button', { name: /bulk actions/i });
+      await user.click(bulkActionsButton);
+      
+      const bulkDeleteOption = screen.getByRole('menuitem', { name: /delete selected/i });
+      await user.click(bulkDeleteOption);
+      
+      const confirmButton = screen.getByRole('button', { name: /confirm/i });
+      await user.click(confirmButton);
+      
+      await waitFor(() => {
+        expect(mockAuditLogger.logBulkAction).toHaveBeenCalledWith(
+          'BULK_DELETE',
+          expect.any(String),
+          expect.any(String),
+          expect.objectContaining({
+            itemIds: [1, 2],
+            itemCount: 2,
+            action: 'Bulk delete performed'
+          })
+        );
+      });
+    });
+
+    it('should log user session actions', async () => {
+      const mockAuditLogger = require('../../../utils/auditLogger');
+      
+      render(<AdminDashboard />, { wrapper: TestWrapper });
+      
+      await waitFor(() => {
+        expect(mockAuditLogger.logUserAction).toHaveBeenCalledWith(
+          'DASHBOARD_ACCESS',
+          expect.any(String),
+          expect.objectContaining({
+            page: 'admin-dashboard',
+            action: 'User accessed admin dashboard'
+          })
+        );
+      });
+    });
+
+    it('should include comprehensive audit metadata', async () => {
+      const user = userEvent.setup();
+      const mockAuditLogger = require('../../../utils/auditLogger');
+      
+      render(<AdminDashboard />, { wrapper: TestWrapper });
+      
+      const addButton = screen.getByRole('button', { name: /add item/i });
+      await user.click(addButton);
+      
+      await user.type(screen.getByLabelText(/name/i), 'Audit Product');
+      await user.type(screen.getByLabelText(/description/i), 'Test');
+      await user.selectOptions(screen.getByLabelText(/category/i), 'Electronics');
+      await user.type(screen.getByLabelText(/price/i), '50.00');
+      
+      const submitButton = screen.getByRole('button', { name: /save/i });
+      await user.click(submitButton);
+      
+      await waitFor(() => {
+        expect(mockAuditLogger.logItemAction).toHaveBeenCalledWith(
+          'CREATE',
+          expect.any(String),
+          expect.any(String),
+          expect.any(String),
+          expect.objectContaining({
+            timestamp: expect.any(String),
+            userAgent: expect.any(String),
+            ipAddress: expect.any(String),
+            sessionId: expect.any(String),
+            itemName: 'Audit Product',
             action: 'Item created'
           })
         );
