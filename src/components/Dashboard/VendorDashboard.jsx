@@ -157,21 +157,21 @@ const VendorDashboard = ({ user }) => {
 
   const getStatusColor = (status) => {
     switch (status) {
-      case 'active': return 'bg-green-100 text-green-800';
-      case 'out_of_stock': return 'bg-red-100 text-red-800';
-      case 'pending': return 'bg-yellow-100 text-yellow-800';
-      case 'shipped': return 'bg-blue-100 text-blue-800';
-      default: return 'bg-gray-100 text-gray-800';
+      case 'active': return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200';
+      case 'out_of_stock': return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200';
+      case 'pending': return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200';
+      case 'shipped': return 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200';
+      default: return 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200';
     }
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 bg-background text-foreground">
       {/* Header */}
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Vendor Dashboard</h1>
-          <p className="text-gray-600">Welcome back, {user?.name}</p>
+          <h1 className="text-3xl font-bold text-foreground">Vendor Dashboard</h1>
+          <p className="text-muted-foreground">Welcome back, {user?.name}</p>
         </div>
         <Button 
           onClick={() => setShowAddProduct(true)}
@@ -184,49 +184,49 @@ const VendorDashboard = ({ user }) => {
 
       {/* Analytics Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <Card>
+        <Card className="border-border">
           <CardContent className="flex items-center p-6">
             <div className="flex items-center">
-              <DollarSign className="h-8 w-8 text-green-600" />
+              <DollarSign className="h-8 w-8 text-green-600 dark:text-green-400" />
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">Total Revenue</p>
-                <p className="text-2xl font-bold text-gray-900">${analytics.totalRevenue.toFixed(2)}</p>
+                <p className="text-sm font-medium text-muted-foreground">Total Revenue</p>
+                <p className="text-2xl font-bold text-foreground">${analytics.totalRevenue.toFixed(2)}</p>
               </div>
             </div>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="border-border">
           <CardContent className="flex items-center p-6">
             <div className="flex items-center">
-              <ShoppingCart className="h-8 w-8 text-blue-600" />
+              <ShoppingCart className="h-8 w-8 text-blue-600 dark:text-blue-400" />
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">Total Orders</p>
-                <p className="text-2xl font-bold text-gray-900">{analytics.totalOrders}</p>
+                <p className="text-sm font-medium text-muted-foreground">Total Orders</p>
+                <p className="text-2xl font-bold text-foreground">{analytics.totalOrders}</p>
               </div>
             </div>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="border-border">
           <CardContent className="flex items-center p-6">
             <div className="flex items-center">
-              <Package className="h-8 w-8 text-purple-600" />
+              <Package className="h-8 w-8 text-purple-600 dark:text-purple-400" />
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">Total Products</p>
-                <p className="text-2xl font-bold text-gray-900">{analytics.totalProducts}</p>
+                <p className="text-sm font-medium text-muted-foreground">Total Products</p>
+                <p className="text-2xl font-bold text-foreground">{analytics.totalProducts}</p>
               </div>
             </div>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="border-border">
           <CardContent className="flex items-center p-6">
             <div className="flex items-center">
-              <AlertCircle className="h-8 w-8 text-red-600" />
+              <AlertCircle className="h-8 w-8 text-red-600 dark:text-red-400" />
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">Low Stock</p>
-                <p className="text-2xl font-bold text-gray-900">{analytics.lowStockCount}</p>
+                <p className="text-sm font-medium text-muted-foreground">Low Stock</p>
+                <p className="text-2xl font-bold text-foreground">{analytics.lowStockCount}</p>
               </div>
             </div>
           </CardContent>
@@ -235,9 +235,9 @@ const VendorDashboard = ({ user }) => {
 
       {/* Add/Edit Product Modal */}
       {showAddProduct && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md mx-4">
-            <h3 className="text-lg font-semibold mb-4">
+        <div className="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-50">
+          <div className="bg-background border border-border rounded-lg p-6 w-full max-w-md mx-4 shadow-lg">
+            <h3 className="text-lg font-semibold mb-4 text-foreground">
               {editingProduct ? 'Edit Product' : 'Add New Product'}
             </h3>
             <div className="space-y-4">
@@ -248,7 +248,7 @@ const VendorDashboard = ({ user }) => {
               />
               <textarea
                 placeholder="Description"
-                className="w-full p-2 border border-gray-300 rounded-md"
+                className="w-full p-2 border border-input rounded-md bg-background text-foreground placeholder:text-muted-foreground focus:ring-2 focus:ring-ring focus:border-ring"
                 rows="3"
                 value={newProduct.description}
                 onChange={(e) => setNewProduct({...newProduct, description: e.target.value})}
@@ -302,9 +302,9 @@ const VendorDashboard = ({ user }) => {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Products Management */}
-        <Card>
+        <Card className="border-border">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
+            <CardTitle className="flex items-center gap-2 text-foreground">
               <Package className="h-5 w-5" />
               Product Inventory
             </CardTitle>
@@ -312,10 +312,10 @@ const VendorDashboard = ({ user }) => {
           <CardContent>
             <div className="space-y-4">
               {products.map((product) => (
-                <div key={product.id} className="flex items-center justify-between p-4 border rounded-lg">
+                <div key={product.id} className="flex items-center justify-between p-4 border border-border rounded-lg bg-card">
                   <div className="flex-1">
-                    <h4 className="font-medium">{product.name}</h4>
-                    <p className="text-sm text-gray-600">
+                    <h4 className="font-medium text-foreground">{product.name}</h4>
+                    <p className="text-sm text-muted-foreground">
                       ${product.price} • Stock: {product.stock} • Sales: {product.sales}
                     </p>
                     <Badge className={getStatusColor(product.status)}>
@@ -334,7 +334,7 @@ const VendorDashboard = ({ user }) => {
                       variant="outline"
                       size="sm"
                       onClick={() => handleDeleteProduct(product.id)}
-                      className="text-red-600 hover:text-red-700"
+                      className="text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>
@@ -346,9 +346,9 @@ const VendorDashboard = ({ user }) => {
         </Card>
 
         {/* Recent Orders */}
-        <Card>
+        <Card className="border-border">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
+            <CardTitle className="flex items-center gap-2 text-foreground">
               <TrendingUp className="h-5 w-5" />
               Recent Orders
             </CardTitle>
@@ -356,13 +356,13 @@ const VendorDashboard = ({ user }) => {
           <CardContent>
             <div className="space-y-4">
               {orders.map((order) => (
-                <div key={order.id} className="flex items-center justify-between p-4 border rounded-lg">
+                <div key={order.id} className="flex items-center justify-between p-4 border border-border rounded-lg bg-card">
                   <div className="flex-1">
-                    <h4 className="font-medium">{order.id}</h4>
-                    <p className="text-sm text-gray-600">
+                    <h4 className="font-medium text-foreground">{order.id}</h4>
+                    <p className="text-sm text-muted-foreground">
                       {order.customer} • ${order.total}
                     </p>
-                    <p className="text-xs text-gray-500">{order.date}</p>
+                    <p className="text-xs text-muted-foreground">{order.date}</p>
                     <Badge className={getStatusColor(order.status)}>
                       {order.status}
                     </Badge>
@@ -378,12 +378,12 @@ const VendorDashboard = ({ user }) => {
       </div>
 
       {/* Sales Analytics */}
-      <Card>
+      <Card className="border-border">
         <CardHeader>
-          <CardTitle>Sales Performance</CardTitle>
+          <CardTitle className="text-foreground">Sales Performance</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="text-center py-8 text-gray-500">
+          <div className="text-center py-8 text-muted-foreground">
             <TrendingUp className="h-12 w-12 mx-auto mb-4 opacity-50" />
             <p>Sales analytics chart would be implemented here</p>
             <p className="text-sm">Integration with charting library (Chart.js, Recharts, etc.)</p>
