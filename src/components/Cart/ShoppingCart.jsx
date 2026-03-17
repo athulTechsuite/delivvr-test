@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { useCart } from '../../hooks/useCart';
+import { useTheme } from '../../contexts/ThemeContext';
 import './ShoppingCart.css';
 
 const ShoppingCart = ({ isOpen, onClose }) => {
   const { user } = useAuth();
+  const { theme } = useTheme();
   const { 
     cartItems, 
     updateQuantity, 
@@ -60,7 +62,7 @@ const ShoppingCart = ({ isOpen, onClose }) => {
   return (
     <>
       <div className="cart-overlay" onClick={onClose}></div>
-      <div className="shopping-cart">
+      <div className={`shopping-cart ${theme}`}>
         <div className="cart-header">
           <h2>Shopping Cart ({getCartCount()})</h2>
           <button 
