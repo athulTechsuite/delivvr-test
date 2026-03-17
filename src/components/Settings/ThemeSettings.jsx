@@ -51,6 +51,7 @@ const ThemeSettings = () => {
             onClick={() => handleThemeChange(option.value)}
             role="radio"
             aria-checked={selectedTheme === option.value}
+            aria-label={`Select ${option.label} theme - ${option.description}`}
             tabIndex={0}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
@@ -73,7 +74,7 @@ const ThemeSettings = () => {
                 value={option.value}
                 checked={selectedTheme === option.value}
                 onChange={() => handleThemeChange(option.value)}
-                aria-label={`Select ${option.label} theme`}
+                aria-label={`Select ${option.label} theme - ${option.description}`}
               />
               <div className="theme-option__radio-custom"></div>
             </div>
