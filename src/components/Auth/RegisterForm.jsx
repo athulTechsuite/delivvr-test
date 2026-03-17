@@ -1,8 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useContext } from 'react';
 import { Link } from 'react-router-dom';
+import { ThemeContext } from '../../contexts/ThemeContext';
 import './RegisterForm.css';
 
 const RegisterForm = ({ onRegister }) => {
+  const { theme } = useContext(ThemeContext);
+  
   const [formData, setFormData] = useState({
     firstName: '',
     lastName: '',
@@ -113,7 +116,7 @@ const RegisterForm = ({ onRegister }) => {
   };
 
   return (
-    <div className="register-form-container">
+    <div className={`register-form-container theme-${theme}`} data-theme={theme}>
       <div className="register-form-card">
         <div className="register-form-header">
           <h2>Create Your Account</h2>
