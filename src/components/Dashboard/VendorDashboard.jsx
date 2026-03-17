@@ -3,6 +3,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '../UI/Card';
 import { Button } from '../UI/Button';
 import { Input } from '../UI/Input';
 import { Badge } from '../UI/Badge';
+import { useTheme } from '../../contexts/ThemeContext';
 import { 
   Package, 
   DollarSign, 
@@ -16,6 +17,7 @@ import {
 } from 'lucide-react';
 
 const VendorDashboard = ({ user }) => {
+  const { theme } = useTheme();
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
   const [analytics, setAnalytics] = useState({
@@ -156,22 +158,63 @@ const VendorDashboard = ({ user }) => {
   };
 
   const getStatusColor = (status) => {
-    switch (status) {
-      case 'active': return 'bg-green-100 text-green-800';
-      case 'out_of_stock': return 'bg-red-100 text-red-800';
-      case 'pending': return 'bg-yellow-100 text-yellow-800';
-      case 'shipped': return 'bg-blue-100 text-blue-800';
-      default: return 'bg-gray-100 text-gray-800';
-    }
+    const baseClasses = theme === 'dark' 
+      ? {
+          active: 'bg-green-900/30 text-green-300 border-green-800',
+          out_of_stock: 'bg-red-900/30 text-red-300 border-red-800',
+          pending: 'bg-yellow-900/30 text-yellow-300 border-yellow-800',
+          shipped: 'bg-blue-900/30 text-blue-300 border-blue-800',
+          default: 'bg-gray-800/30 text-gray-300 border-gray-700'
+        }
+      : {
+          active: 'bg-green-100 text-green-800 border-green-200',
+          out_of_stock: 'bg-red-100 text-red-800 border-red-200',
+          pending: 'bg-yellow-100 text-yellow-800 border-yellow-200',
+          shipped: 'bg-blue-100 text-blue-800 border-blue-200',
+          default: 'bg-gray-100 text-gray-800 border-gray-200'
+        };
+
+    return baseClasses[status] || baseClasses.default;
+  };
+
+  const themeClasses = {
+    container: theme === 'dark' 
+      ? 'bg-gray-900 text-gray-100' 
+      : 'bg-gray-50 text-gray-900',
+    header: theme === 'dark' 
+      ? 'text-gray-100' 
+      : 'text-gray-900',
+    subtitle: theme === 'dark' 
+      ? 'text-gray-300' 
+      : 'text-gray-600',
+    modal: theme === 'dark' 
+      ? 'bg-gray-800 border-gray-700' 
+      : 'bg-white border-gray-200',
+    modalOverlay: 'bg-black bg-opacity-50',
+    productItem: theme === 'dark' 
+      ? 'border-gray-700 bg-gray-800/50' 
+      : 'border-gray-200 bg-white',
+    text: {
+      primary: theme === 'dark' ? 'text-gray-100' : 'text-gray-900',
+      secondary: theme === 'dark' ? 'text-gray-300' : 'text-gray-600',
+      muted: theme === 'dark' ? 'text-gray-400' : 'text-gray-500'
+    },
+    input: theme === 'dark' 
+      ? 'bg-gray-700 border-gray-600 text-gray-100 placeholder-gray-400' 
+      : 'bg-white border-gray-300 text-gray-900 placeholder-gray-500'
   };
 
   return (
-    <div className="space-y-6">
+    <div className={`space-y-6 transition-colors duration-200 ${themeClasses.container}`}>
       {/* Header */}
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Vendor Dashboard</h1>
-          <p className="text-gray-600">Welcome back, {user?.name}</p>
+          <h1 className={`text-3xl font-bold transition-colors duration-200 ${themeClasses.header}`}>
+            Vendor Dashboard
+          </h1>
+          <p className={`transition-colors duration-200 ${themeClasses.subtitle}`}>
+            Welcome back, {user?.name}
+          </p>
         </div>
         <Button 
           onClick={() => setShowAddProduct(true)}
@@ -189,8 +232,12 @@ const VendorDashboard = ({ user }) => {
             <div className="flex items-center">
               <DollarSign className="h-8 w-8 text-green-600" />
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">Total Revenue</p>
-                <p className="text-2xl font-bold text-gray-900">${analytics.totalRevenue.toFixed(2)}</p>
+                <p className={`text-sm font-medium transition-colors duration-200 ${themeClasses.text.secondary}`}>
+                  Total Revenue
+                </p>
+                <p className={`text-2xl font-bold transition-colors duration-200 ${themeClasses.text.primary}`}>
+                  ${analytics.totalRevenue.toFixed(2)}
+                </p>
               </div>
             </div>
           </CardContent>
@@ -201,8 +248,12 @@ const VendorDashboard = ({ user }) => {
             <div className="flex items-center">
               <ShoppingCart className="h-8 w-8 text-blue-600" />
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">Total Orders</p>
-                <p className="text-2xl font-bold text-gray-900">{analytics.totalOrders}</p>
+                <p className={`text-sm font-medium transition-colors duration-200 ${themeClasses.text.secondary}`}>
+                  Total Orders
+                </p>
+                <p className={`text-2xl font-bold transition-colors duration-200 ${themeClasses.text.primary}`}>
+                  {analytics.totalOrders}
+                </p>
               </div>
             </div>
           </CardContent>
@@ -213,8 +264,12 @@ const VendorDashboard = ({ user }) => {
             <div className="flex items-center">
               <Package className="h-8 w-8 text-purple-600" />
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">Total Products</p>
-                <p className="text-2xl font-bold text-gray-900">{analytics.totalProducts}</p>
+                <p className={`text-sm font-medium transition-colors duration-200 ${themeClasses.text.secondary}`}>
+                  Total Products
+                </p>
+                <p className={`text-2xl font-bold transition-colors duration-200 ${themeClasses.text.primary}`}>
+                  {analytics.totalProducts}
+                </p>
               </div>
             </div>
           </CardContent>
@@ -225,8 +280,12 @@ const VendorDashboard = ({ user }) => {
             <div className="flex items-center">
               <AlertCircle className="h-8 w-8 text-red-600" />
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">Low Stock</p>
-                <p className="text-2xl font-bold text-gray-900">{analytics.lowStockCount}</p>
+                <p className={`text-sm font-medium transition-colors duration-200 ${themeClasses.text.secondary}`}>
+                  Low Stock
+                </p>
+                <p className={`text-2xl font-bold transition-colors duration-200 ${themeClasses.text.primary}`}>
+                  {analytics.lowStockCount}
+                </p>
               </div>
             </div>
           </CardContent>
@@ -235,9 +294,9 @@ const VendorDashboard = ({ user }) => {
 
       {/* Add/Edit Product Modal */}
       {showAddProduct && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md mx-4">
-            <h3 className="text-lg font-semibold mb-4">
+        <div className={`fixed inset-0 flex items-center justify-center z-50 transition-opacity duration-200 ${themeClasses.modalOverlay}`}>
+          <div className={`rounded-lg p-6 w-full max-w-md mx-4 transition-all duration-200 ${themeClasses.modal}`}>
+            <h3 className={`text-lg font-semibold mb-4 transition-colors duration-200 ${themeClasses.text.primary}`}>
               {editingProduct ? 'Edit Product' : 'Add New Product'}
             </h3>
             <div className="space-y-4">
@@ -245,10 +304,11 @@ const VendorDashboard = ({ user }) => {
                 placeholder="Product Name"
                 value={newProduct.name}
                 onChange={(e) => setNewProduct({...newProduct, name: e.target.value})}
+                className={`transition-colors duration-200 ${themeClasses.input}`}
               />
               <textarea
                 placeholder="Description"
-                className="w-full p-2 border border-gray-300 rounded-md"
+                className={`w-full p-2 border rounded-md transition-colors duration-200 ${themeClasses.input}`}
                 rows="3"
                 value={newProduct.description}
                 onChange={(e) => setNewProduct({...newProduct, description: e.target.value})}
@@ -259,22 +319,26 @@ const VendorDashboard = ({ user }) => {
                 step="0.01"
                 value={newProduct.price}
                 onChange={(e) => setNewProduct({...newProduct, price: e.target.value})}
+                className={`transition-colors duration-200 ${themeClasses.input}`}
               />
               <Input
                 placeholder="Stock Quantity"
                 type="number"
                 value={newProduct.stock}
                 onChange={(e) => setNewProduct({...newProduct, stock: e.target.value})}
+                className={`transition-colors duration-200 ${themeClasses.input}`}
               />
               <Input
                 placeholder="Category"
                 value={newProduct.category}
                 onChange={(e) => setNewProduct({...newProduct, category: e.target.value})}
+                className={`transition-colors duration-200 ${themeClasses.input}`}
               />
               <Input
                 placeholder="Image URL"
                 value={newProduct.image}
                 onChange={(e) => setNewProduct({...newProduct, image: e.target.value})}
+                className={`transition-colors duration-200 ${themeClasses.input}`}
               />
             </div>
             <div className="flex gap-2 mt-6">
@@ -312,13 +376,15 @@ const VendorDashboard = ({ user }) => {
           <CardContent>
             <div className="space-y-4">
               {products.map((product) => (
-                <div key={product.id} className="flex items-center justify-between p-4 border rounded-lg">
+                <div key={product.id} className={`flex items-center justify-between p-4 border rounded-lg transition-colors duration-200 ${themeClasses.productItem}`}>
                   <div className="flex-1">
-                    <h4 className="font-medium">{product.name}</h4>
-                    <p className="text-sm text-gray-600">
+                    <h4 className={`font-medium transition-colors duration-200 ${themeClasses.text.primary}`}>
+                      {product.name}
+                    </h4>
+                    <p className={`text-sm transition-colors duration-200 ${themeClasses.text.secondary}`}>
                       ${product.price} • Stock: {product.stock} • Sales: {product.sales}
                     </p>
-                    <Badge className={getStatusColor(product.status)}>
+                    <Badge className={`transition-colors duration-200 border ${getStatusColor(product.status)}`}>
                       {product.status.replace('_', ' ')}
                     </Badge>
                   </div>
@@ -334,7 +400,7 @@ const VendorDashboard = ({ user }) => {
                       variant="outline"
                       size="sm"
                       onClick={() => handleDeleteProduct(product.id)}
-                      className="text-red-600 hover:text-red-700"
+                      className="text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 transition-colors duration-200"
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>
@@ -356,14 +422,18 @@ const VendorDashboard = ({ user }) => {
           <CardContent>
             <div className="space-y-4">
               {orders.map((order) => (
-                <div key={order.id} className="flex items-center justify-between p-4 border rounded-lg">
+                <div key={order.id} className={`flex items-center justify-between p-4 border rounded-lg transition-colors duration-200 ${themeClasses.productItem}`}>
                   <div className="flex-1">
-                    <h4 className="font-medium">{order.id}</h4>
-                    <p className="text-sm text-gray-600">
+                    <h4 className={`font-medium transition-colors duration-200 ${themeClasses.text.primary}`}>
+                      {order.id}
+                    </h4>
+                    <p className={`text-sm transition-colors duration-200 ${themeClasses.text.secondary}`}>
                       {order.customer} • ${order.total}
                     </p>
-                    <p className="text-xs text-gray-500">{order.date}</p>
-                    <Badge className={getStatusColor(order.status)}>
+                    <p className={`text-xs transition-colors duration-200 ${themeClasses.text.muted}`}>
+                      {order.date}
+                    </p>
+                    <Badge className={`transition-colors duration-200 border ${getStatusColor(order.status)}`}>
                       {order.status}
                     </Badge>
                   </div>
@@ -383,10 +453,14 @@ const VendorDashboard = ({ user }) => {
           <CardTitle>Sales Performance</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="text-center py-8 text-gray-500">
-            <TrendingUp className="h-12 w-12 mx-auto mb-4 opacity-50" />
-            <p>Sales analytics chart would be implemented here</p>
-            <p className="text-sm">Integration with charting library (Chart.js, Recharts, etc.)</p>
+          <div className="text-center py-8">
+            <TrendingUp className={`h-12 w-12 mx-auto mb-4 opacity-50 transition-colors duration-200 ${themeClasses.text.muted}`} />
+            <p className={`transition-colors duration-200 ${themeClasses.text.muted}`}>
+              Sales analytics chart would be implemented here
+            </p>
+            <p className={`text-sm transition-colors duration-200 ${themeClasses.text.muted}`}>
+              Integration with charting library (Chart.js, Recharts, etc.)
+            </p>
           </div>
         </CardContent>
       </Card>

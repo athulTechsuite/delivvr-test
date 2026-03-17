@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useCart } from '../../contexts/CartContext';
+import { useTheme } from '../../contexts/ThemeContext';
 import './ProductCatalog.css';
 
 const ProductCatalog = () => {
   const { user } = useAuth();
   const { addToCart } = useCart();
+  const { theme } = useTheme();
   const [products, setProducts] = useState([]);
   const [filteredProducts, setFilteredProducts] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -109,7 +111,7 @@ const ProductCatalog = () => {
   };
 
   const ProductCard = ({ product }) => (
-    <div className="product-card">
+    <div className={`product-card ${theme}`}>
       <div className="product-image-container">
         <img 
           src={product.image || '/images/placeholder-product.jpg'} 
@@ -117,50 +119,50 @@ const ProductCatalog = () => {
           className="product-image"
         />
         {product.discount && (
-          <span className="product-discount">-{product.discount}%</span>
+          <span className={`product-discount ${theme}`}>-{product.discount}%</span>
         )}
       </div>
       
-      <div className="product-info">
-        <h3 className="product-name">{product.name}</h3>
-        <p className="product-description">{product.description}</p>
+      <div className={`product-info ${theme}`}>
+        <h3 className={`product-name ${theme}`}>{product.name}</h3>
+        <p className={`product-description ${theme}`}>{product.description}</p>
         
-        <div className="product-rating">
+        <div className={`product-rating ${theme}`}>
           {[...Array(5)].map((_, i) => (
             <span 
               key={i} 
-              className={`star ${i < (product.rating || 0) ? 'filled' : ''}`}
+              className={`star ${i < (product.rating || 0) ? 'filled' : ''} ${theme}`}
             >
               ★
             </span>
           ))}
-          <span className="rating-count">({product.reviewCount || 0})</span>
+          <span className={`rating-count ${theme}`}>({product.reviewCount || 0})</span>
         </div>
 
         <div className="product-price-container">
           {product.originalPrice && product.originalPrice > product.price && (
-            <span className="original-price">${product.originalPrice.toFixed(2)}</span>
+            <span className={`original-price ${theme}`}>${product.originalPrice.toFixed(2)}</span>
           )}
-          <span className="product-price">${product.price.toFixed(2)}</span>
+          <span className={`product-price ${theme}`}>${product.price.toFixed(2)}</span>
         </div>
 
         <div className="product-actions">
           <button 
-            className="btn-add-cart"
+            className={`btn-add-cart ${theme}`}
             onClick={() => handleAddToCart(product)}
             disabled={product.stock === 0}
           >
             {product.stock === 0 ? 'Out of Stock' : 'Add to Cart'}
           </button>
           {user && (
-            <button className="btn-wishlist">
+            <button className={`btn-wishlist ${theme}`}>
               ♡
             </button>
           )}
         </div>
 
         {product.stock > 0 && product.stock <= 5 && (
-          <p className="stock-warning">Only {product.stock} left in stock!</p>
+          <p className={`stock-warning ${theme}`}>Only {product.stock} left in stock!</p>
         )}
       </div>
     </div>
@@ -168,19 +170,19 @@ const ProductCatalog = () => {
 
   if (loading) {
     return (
-      <div className="catalog-loading">
-        <div className="loading-spinner"></div>
-        <p>Loading products...</p>
+      <div className={`catalog-loading ${theme}`}>
+        <div className={`loading-spinner ${theme}`}></div>
+        <p className={theme}>Loading products...</p>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="catalog-error">
-        <h3>Error Loading Products</h3>
-        <p>{error}</p>
-        <button onClick={fetchProducts} className="btn-retry">
+      <div className={`catalog-error ${theme}`}>
+        <h3 className={theme}>Error Loading Products</h3>
+        <p className={theme}>{error}</p>
+        <button onClick={fetchProducts} className={`btn-retry ${theme}`}>
           Try Again
         </button>
       </div>
@@ -188,33 +190,33 @@ const ProductCatalog = () => {
   }
 
   return (
-    <div className="product-catalog">
-      <div className="catalog-header">
-        <h2>Product Catalog</h2>
-        <p>Discover our amazing products</p>
+    <div className={`product-catalog ${theme}`}>
+      <div className={`catalog-header ${theme}`}>
+        <h2 className={theme}>Product Catalog</h2>
+        <p className={theme}>Discover our amazing products</p>
       </div>
 
-      <div className="catalog-filters">
+      <div className={`catalog-filters ${theme}`}>
         <div className="filter-section">
           <div className="filter-group">
-            <label htmlFor="search">Search Products</label>
+            <label htmlFor="search" className={theme}>Search Products</label>
             <input
               id="search"
               type="text"
               placeholder="Search products..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="search-input"
+              className={`search-input ${theme}`}
             />
           </div>
 
           <div className="filter-group">
-            <label htmlFor="category">Category</label>
+            <label htmlFor="category" className={theme}>Category</label>
             <select
               id="category"
               value={selectedCategory}
               onChange={(e) => setSelectedCategory(e.target.value)}
-              className="filter-select"
+              className={`filter-select ${theme}`}
             >
               <option value="all">All Categories</option>
               {categories.map(category => (
@@ -226,12 +228,12 @@ const ProductCatalog = () => {
           </div>
 
           <div className="filter-group">
-            <label htmlFor="sort">Sort By</label>
+            <label htmlFor="sort" className={theme}>Sort By</label>
             <select
               id="sort"
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value)}
-              className="filter-select"
+              className={`filter-select ${theme}`}
             >
               <option value="name">Name</option>
               <option value="price-low">Price: Low to High</option>
@@ -241,36 +243,36 @@ const ProductCatalog = () => {
           </div>
 
           <div className="filter-group price-range">
-            <label>Price Range</label>
+            <label className={theme}>Price Range</label>
             <div className="price-inputs">
               <input
                 type="number"
                 placeholder="Min"
                 value={priceRange.min}
                 onChange={(e) => handlePriceRangeChange('min', e.target.value)}
-                className="price-input"
+                className={`price-input ${theme}`}
               />
-              <span>to</span>
+              <span className={theme}>to</span>
               <input
                 type="number"
                 placeholder="Max"
                 value={priceRange.max}
                 onChange={(e) => handlePriceRangeChange('max', e.target.value)}
-                className="price-input"
+                className={`price-input ${theme}`}
               />
             </div>
           </div>
         </div>
 
-        <div className="results-info">
-          <span>{filteredProducts.length} products found</span>
+        <div className={`results-info ${theme}`}>
+          <span className={theme}>{filteredProducts.length} products found</span>
         </div>
       </div>
 
       {filteredProducts.length === 0 ? (
-        <div className="no-products">
-          <h3>No Products Found</h3>
-          <p>Try adjusting your filters or search terms.</p>
+        <div className={`no-products ${theme}`}>
+          <h3 className={theme}>No Products Found</h3>
+          <p className={theme}>Try adjusting your filters or search terms.</p>
         </div>
       ) : (
         <div className="products-grid">
