@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../hooks/useAuth';
+import { useTheme } from '../../contexts/ThemeContext';
 import { orderService } from '../../services/orderService';
 import { wishlistService } from '../../services/wishlistService';
 import { userService } from '../../services/userService';
@@ -7,6 +8,7 @@ import './CustomerDashboard.css';
 
 const CustomerDashboard = () => {
   const { user } = useAuth();
+  const { theme } = useTheme();
   const [activeTab, setActiveTab] = useState('overview');
   const [orders, setOrders] = useState([]);
   const [wishlist, setWishlist] = useState([]);
@@ -59,7 +61,7 @@ const CustomerDashboard = () => {
 
   if (loading) {
     return (
-      <div className="dashboard-loading">
+      <div className={`dashboard-loading ${theme}`}>
         <div className="loading-spinner"></div>
         <p>Loading dashboard...</p>
       </div>
@@ -67,7 +69,7 @@ const CustomerDashboard = () => {
   }
 
   return (
-    <div className="customer-dashboard">
+    <div className={`customer-dashboard ${theme}`}>
       <div className="dashboard-header">
         <h1>Welcome back, {user.firstName}!</h1>
         <p>Manage your account, orders, and wishlist</p>
