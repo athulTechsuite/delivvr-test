@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../hooks/useAuth';
+import { useTheme } from '../../hooks/useTheme';
 import { orderService } from '../../services/orderService';
 import { wishlistService } from '../../services/wishlistService';
 import { userService } from '../../services/userService';
@@ -7,6 +8,7 @@ import './CustomerDashboard.css';
 
 const CustomerDashboard = () => {
   const { user } = useAuth();
+  const { theme } = useTheme();
   const [activeTab, setActiveTab] = useState('overview');
   const [orders, setOrders] = useState([]);
   const [wishlist, setWishlist] = useState([]);
@@ -59,7 +61,7 @@ const CustomerDashboard = () => {
 
   if (loading) {
     return (
-      <div className="dashboard-loading">
+      <div className={`dashboard-loading theme-${theme}`}>
         <div className="loading-spinner"></div>
         <p>Loading dashboard...</p>
       </div>
@@ -67,7 +69,7 @@ const CustomerDashboard = () => {
   }
 
   return (
-    <div className="customer-dashboard">
+    <div className={`customer-dashboard theme-${theme}`}>
       <div className="dashboard-header">
         <h1>Welcome back, {user.firstName}!</h1>
         <p>Manage your account, orders, and wishlist</p>
@@ -136,11 +138,12 @@ const CustomerDashboard = () => {
 };
 
 const OverviewTab = ({ orders, wishlist, user }) => {
+  const { theme } = useTheme();
   const recentOrders = orders.slice(0, 3);
   const totalSpent = orders.reduce((sum, order) => sum + order.total, 0);
 
   return (
-    <div className="overview-tab">
+    <div className={`overview-tab theme-${theme}`}>
       <div className="stats-grid">
         <div className="stat-card">
           <div className="stat-icon">📦</div>
@@ -220,6 +223,7 @@ const OverviewTab = ({ orders, wishlist, user }) => {
 };
 
 const OrdersTab = ({ orders }) => {
+  const { theme } = useTheme();
   const [statusFilter, setStatusFilter] = useState('all');
   
   const filteredOrders = orders.filter(order => 
@@ -227,7 +231,7 @@ const OrdersTab = ({ orders }) => {
   );
 
   return (
-    <div className="orders-tab">
+    <div className={`orders-tab theme-${theme}`}>
       <div className="orders-header">
         <h2>Order History</h2>
         <div className="filter-controls">
@@ -305,8 +309,10 @@ const OrdersTab = ({ orders }) => {
 };
 
 const WishlistTab = ({ wishlist, onRemoveItem }) => {
+  const { theme } = useTheme();
+
   return (
-    <div className="wishlist-tab">
+    <div className={`wishlist-tab theme-${theme}`}>
       <div className="wishlist-header">
         <h2>My Wishlist</h2>
         <p>{wishlist.length} items</p>
@@ -365,6 +371,7 @@ const WishlistTab = ({ wishlist, onRemoveItem }) => {
 };
 
 const ProfileTab = ({ profile, onUpdateProfile }) => {
+  const { theme } = useTheme();
   const [editing, setEditing] = useState(false);
   const [formData, setFormData] = useState(profile || {});
 
@@ -389,7 +396,7 @@ const ProfileTab = ({ profile, onUpdateProfile }) => {
   };
 
   return (
-    <div className="profile-tab">
+    <div className={`profile-tab theme-${theme}`}>
       <div className="profile-header">
         <h2>Account Profile</h2>
         {!editing && (
