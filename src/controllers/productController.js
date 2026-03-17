@@ -1,5 +1,23 @@
 const Product = require('../models/Product');
+const AuditLog = require('../models/AuditLog');
 const { validationResult } = require('express-validator');
+
+// Audit logging helper
+const logAuditAction = async (action, userId, resourceType, resourceId, details = {}) => {
+  try {
+    await AuditLog.create({
+      action,
+      userId,
+      resourceType,
+      resourceId,
+      details,
+      timestamp: new Date(),
+      ipAddress: details.ipAddress
+    });
+  } catch (error) {
+    console.error('Audit log error:', error);
+  }
+};
 
 // Get all products with filtering and pagination
 const getProducts = async (req, res) => {
@@ -24,16 +42,48 @@ const getProducts = async (req, res) => {
         { description: { $regex: req.query.search, $options: 'i' } }
       ];
     }
+    if (req.query.vendor) {
+      filter.vendor = req.query.vendor;
+    }
+    if (req.query.tags) {
+      filter.tags = { $in: req.query.tags.split(',') };
+    }
 
-    // Only show active products for non-admin users
-    if (!req.user || req.user.role !== 'admin') {
+    // Admin-specific filters
+    if (req.user && req.user.role === 'admin') {
+      if (req.query.isActive !== undefined) {
+        filter.isActive = req.query.isActive === 'true';
+      }
+      if (req.query.stockStatus) {
+        switch (req.query.stockStatus) {
+          case 'inStock':
+            filter.stock = { $gt: 0 };
+            break;
+          case 'outOfStock':
+            filter.stock = { $lte: 0 };
+            break;
+          case 'lowStock':
+            filter.stock = { $gt: 0, $lte: 10 };
+            break;
+        }
+      }
+    } else {
+      // Only show active products for non-admin users
       filter.isActive = true;
       filter.stock = { $gt: 0 };
     }
 
+    // Build sort object
+    let sort = { createdAt: -1 };
+    if (req.query.sortBy) {
+      const sortField = req.query.sortBy;
+      const sortOrder = req.query.sortOrder === 'asc' ? 1 : -1;
+      sort = { [sortField]: sortOrder };
+    }
+
     const products = await Product.find(filter)
       .populate('vendor', 'name email')
-      .sort({ createdAt: -1 })
+      .sort(sort)
       .skip(skip)
       .limit(limit);
 
@@ -149,6 +199,20 @@ const createProduct = async (req, res) => {
     const populatedProduct = await Product.findById(product._id)
       .populate('vendor', 'name email');
 
+    // Log audit action
+    await logAuditAction(
+      'create',
+      req.user.id,
+      'product',
+      product._id,
+      {
+        productName: name,
+        category,
+        price,
+        ipAddress: req.ip
+      }
+    );
+
     res.status(201).json({
       success: true,
       message: 'Product created successfully',
@@ -200,14 +264,17 @@ const updateProduct = async (req, res) => {
     ];
     
     const updates = {};
+    const changes = {};
     allowedUpdates.forEach(field => {
       if (req.body[field] !== undefined) {
+        changes[field] = { from: product[field], to: req.body[field] };
         updates[field] = req.body[field];
       }
     });
 
     // Only admin can change vendor
     if (req.user.role === 'admin' && req.body.vendor) {
+      changes.vendor = { from: product.vendor, to: req.body.vendor };
       updates.vendor = req.body.vendor;
     }
 
@@ -218,6 +285,19 @@ const updateProduct = async (req, res) => {
       updates,
       { new: true, runValidators: true }
     ).populate('vendor', 'name email');
+
+    // Log audit action
+    await logAuditAction(
+      'update',
+      req.user.id,
+      'product',
+      id,
+      {
+        productName: product.name,
+        changes,
+        ipAddress: req.ip
+      }
+    );
 
     res.json({
       success: true,
@@ -260,6 +340,19 @@ const deleteProduct = async (req, res) => {
     product.updatedAt = new Date();
     await product.save();
 
+    // Log audit action
+    await logAuditAction(
+      'delete',
+      req.user.id,
+      'product',
+      id,
+      {
+        productName: product.name,
+        category: product.category,
+        ipAddress: req.ip
+      }
+    );
+
     res.json({
       success: true,
       message: 'Product deleted successfully'
@@ -269,6 +362,152 @@ const deleteProduct = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to delete product',
+      error: error.message
+    });
+  }
+};
+
+// Bulk update products (admin only)
+const bulkUpdateProducts = async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Admin access required for bulk operations'
+      });
+    }
+
+    const { productIds, updates } = req.body;
+
+    if (!productIds || !Array.isArray(productIds) || productIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Product IDs are required'
+      });
+    }
+
+    if (!updates || typeof updates !== 'object') {
+      return res.status(400).json({
+        success: false,
+        message: 'Updates object is required'
+      });
+    }
+
+    const allowedUpdates = ['category', 'isActive', 'tags'];
+    const validUpdates = {};
+    
+    Object.keys(updates).forEach(key => {
+      if (allowedUpdates.includes(key)) {
+        validUpdates[key] = updates[key];
+      }
+    });
+
+    if (Object.keys(validUpdates).length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No valid updates provided'
+      });
+    }
+
+    validUpdates.updatedAt = new Date();
+
+    const result = await Product.updateMany(
+      { _id: { $in: productIds } },
+      { $set: validUpdates }
+    );
+
+    // Log audit action for bulk update
+    await logAuditAction(
+      'bulk_update',
+      req.user.id,
+      'product',
+      null,
+      {
+        productIds,
+        updates: validUpdates,
+        modifiedCount: result.modifiedCount,
+        ipAddress: req.ip
+      }
+    );
+
+    res.json({
+      success: true,
+      message: `Successfully updated ${result.modifiedCount} products`,
+      data: {
+        matchedCount: result.matchedCount,
+        modifiedCount: result.modifiedCount
+      }
+    });
+  } catch (error) {
+    console.error('Bulk update products error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to bulk update products',
+      error: error.message
+    });
+  }
+};
+
+// Bulk delete products (admin only)
+const bulkDeleteProducts = async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Admin access required for bulk operations'
+      });
+    }
+
+    const { productIds } = req.body;
+
+    if (!productIds || !Array.isArray(productIds) || productIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Product IDs are required'
+      });
+    }
+
+    // Get product names for audit log
+    const products = await Product.find({ _id: { $in: productIds } }, 'name category');
+
+    // Soft delete by setting isActive to false
+    const result = await Product.updateMany(
+      { _id: { $in: productIds } },
+      { 
+        $set: { 
+          isActive: false, 
+          updatedAt: new Date() 
+        } 
+      }
+    );
+
+    // Log audit action for bulk delete
+    await logAuditAction(
+      'bulk_delete',
+      req.user.id,
+      'product',
+      null,
+      {
+        productIds,
+        products: products.map(p => ({ id: p._id, name: p.name, category: p.category })),
+        modifiedCount: result.modifiedCount,
+        ipAddress: req.ip
+      }
+    );
+
+    res.json({
+      success: true,
+      message: `Successfully deleted ${result.modifiedCount} products`,
+      data: {
+        matchedCount: result.matchedCount,
+        modifiedCount: result.modifiedCount
+      }
+    });
+  } catch (error) {
+    console.error('Bulk delete products error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to bulk delete products',
       error: error.message
     });
   }
@@ -347,6 +586,53 @@ const getCategories = async (req, res) => {
   }
 };
 
+// Get product statistics (admin only)
+const getProductStats = async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Admin access required'
+      });
+    }
+
+    const stats = await Promise.all([
+      Product.countDocuments({ isActive: true }),
+      Product.countDocuments({ isActive: false }),
+      Product.countDocuments({ stock: { $lte: 0 }, isActive: true }),
+      Product.countDocuments({ stock: { $gt: 0, $lte: 10 }, isActive: true }),
+      Product.aggregate([
+        { $match: { isActive: true } },
+        { $group: { _id: '$category', count: { $sum: 1 } } },
+        { $sort: { count: -1 } }
+      ]),
+      Product.aggregate([
+        { $match: { isActive: true } },
+        { $group: { _id: null, avgPrice: { $avg: '$price' }, totalValue: { $sum: { $multiply: ['$price', '$stock'] } } } }
+      ])
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        activeProducts: stats[0],
+        inactiveProducts: stats[1],
+        outOfStock: stats[2],
+        lowStock: stats[3],
+        categoryCounts: stats[4],
+        priceStats: stats[5][0] || { avgPrice: 0, totalValue: 0 }
+      }
+    });
+  } catch (error) {
+    console.error('Get product stats error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch product statistics',
+      error: error.message
+    });
+  }
+};
+
 // Add product review (customers only)
 const addReview = async (req, res) => {
   try {
@@ -400,6 +686,19 @@ const addReview = async (req, res) => {
       .populate('vendor', 'name email')
       .populate('reviews.user', 'name');
 
+    // Log audit action
+    await logAuditAction(
+      'review',
+      req.user.id,
+      'product',
+      id,
+      {
+        productName: product.name,
+        rating,
+        ipAddress: req.ip
+      }
+    );
+
     res.json({
       success: true,
       message: 'Review added successfully',
@@ -421,7 +720,10 @@ module.exports = {
   createProduct,
   updateProduct,
   deleteProduct,
+  bulkUpdateProducts,
+  bulkDeleteProducts,
   getVendorProducts,
   getCategories,
+  getProductStats,
   addReview
 };
