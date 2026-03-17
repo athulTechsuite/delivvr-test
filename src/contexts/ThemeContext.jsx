@@ -1,5 +1,14 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 
+// Define theme constants for validation
+const THEME_VALUES = {
+  LIGHT: 'light',
+  DARK: 'dark',
+  SYSTEM: 'system'
+};
+
+const VALID_THEMES = Object.values(THEME_VALUES);
+
 const ThemeContext = createContext();
 
 export const useTheme = () => {
@@ -11,21 +20,21 @@ export const useTheme = () => {
 };
 
 export const ThemeProvider = ({ children }) => {
-  const [theme, setTheme] = useState('system');
-  const [resolvedTheme, setResolvedTheme] = useState('light');
+  const [theme, setTheme] = useState(THEME_VALUES.SYSTEM);
+  const [resolvedTheme, setResolvedTheme] = useState(THEME_VALUES.LIGHT);
 
   // Get system theme preference
   const getSystemTheme = () => {
     if (typeof window !== 'undefined' && window.matchMedia) {
-      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      return window.matchMedia('(prefers-color-scheme: dark)').matches ? THEME_VALUES.DARK : THEME_VALUES.LIGHT;
     }
-    return 'light';
+    return THEME_VALUES.LIGHT;
   };
 
   // Initialize theme from localStorage or system preference
   useEffect(() => {
     const storedTheme = localStorage.getItem('theme');
-    if (storedTheme && ['light', 'dark', 'system'].includes(storedTheme)) {
+    if (storedTheme && VALID_THEMES.includes(storedTheme)) {
       setTheme(storedTheme);
     }
   }, []);
@@ -34,14 +43,14 @@ export const ThemeProvider = ({ children }) => {
   useEffect(() => {
     let currentTheme = theme;
     
-    if (theme === 'system') {
+    if (theme === THEME_VALUES.SYSTEM) {
       currentTheme = getSystemTheme();
     }
 
     setResolvedTheme(currentTheme);
     
     // Apply theme to document root
-    document.documentElement.classList.remove('light', 'dark');
+    document.documentElement.classList.remove(THEME_VALUES.LIGHT, THEME_VALUES.DARK);
     document.documentElement.classList.add(currentTheme);
     
     // Set CSS custom property for theme
@@ -53,24 +62,31 @@ export const ThemeProvider = ({ children }) => {
     if (typeof window === 'undefined') return;
 
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    let isCleanedUp = false;
     
     const handleChange = () => {
-      if (theme === 'system') {
+      if (isCleanedUp) return;
+      
+      if (theme === THEME_VALUES.SYSTEM) {
         const systemTheme = getSystemTheme();
         setResolvedTheme(systemTheme);
-        document.documentElement.classList.remove('light', 'dark');
+        document.documentElement.classList.remove(THEME_VALUES.LIGHT, THEME_VALUES.DARK);
         document.documentElement.classList.add(systemTheme);
         document.documentElement.setAttribute('data-theme', systemTheme);
       }
     };
 
     mediaQuery.addEventListener('change', handleChange);
-    return () => mediaQuery.removeEventListener('change', handleChange);
+    
+    return () => {
+      isCleanedUp = true;
+      mediaQuery.removeEventListener('change', handleChange);
+    };
   }, [theme]);
 
   const setThemePreference = (newTheme) => {
-    if (!['light', 'dark', 'system'].includes(newTheme)) {
-      console.warn(`Invalid theme: ${newTheme}. Valid options: light, dark, system`);
+    if (!VALID_THEMES.includes(newTheme)) {
+      console.warn(`Invalid theme: ${newTheme}. Valid options: ${VALID_THEMES.join(', ')}`);
       return;
     }
     
@@ -79,7 +95,7 @@ export const ThemeProvider = ({ children }) => {
   };
 
   const toggleTheme = () => {
-    const newTheme = resolvedTheme === 'light' ? 'dark' : 'light';
+    const newTheme = resolvedTheme === THEME_VALUES.LIGHT ? THEME_VALUES.DARK : THEME_VALUES.LIGHT;
     setThemePreference(newTheme);
   };
 
@@ -88,9 +104,9 @@ export const ThemeProvider = ({ children }) => {
     resolvedTheme, // Actual theme being used (light or dark)
     setTheme: setThemePreference,
     toggleTheme,
-    isSystemTheme: theme === 'system',
-    isDarkMode: resolvedTheme === 'dark',
-    isLightMode: resolvedTheme === 'light'
+    isSystemTheme: theme === THEME_VALUES.SYSTEM,
+    isDarkMode: resolvedTheme === THEME_VALUES.DARK,
+    isLightMode: resolvedTheme === THEME_VALUES.LIGHT
   };
 
   return (
