@@ -106,68 +106,68 @@ const LoginForm = () => {
 
   return (
     <div className={`login-form-container ${theme}`}>
-      <div className="login-form-card">
-        <div className="login-header">
+      <div className={`login-form-card ${theme}`}>
+        <div className={`login-header ${theme}`}>
           <h2>Welcome Back</h2>
           <p>Sign in to your account</p>
         </div>
 
         {errors.general && (
-          <div className="error-message general-error">
+          <div className={`error-message general-error ${theme}`}>
             {errors.general}
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="login-form">
-          <div className="form-group">
-            <label htmlFor="email">Email Address</label>
+        <form onSubmit={handleSubmit} className={`login-form ${theme}`}>
+          <div className={`form-group ${theme}`}>
+            <label htmlFor="email" className={theme}>Email Address</label>
             <input
               type="email"
               id="email"
               name="email"
               value={formData.email}
               onChange={handleChange}
-              className={errors.email ? 'error' : ''}
+              className={`${errors.email ? 'error' : ''} ${theme}`}
               placeholder="Enter your email"
               disabled={isLoading}
             />
-            {errors.email && <span className="error-message">{errors.email}</span>}
+            {errors.email && <span className={`error-message ${theme}`}>{errors.email}</span>}
           </div>
 
-          <div className="form-group">
-            <label htmlFor="password">Password</label>
+          <div className={`form-group ${theme}`}>
+            <label htmlFor="password" className={theme}>Password</label>
             <input
               type="password"
               id="password"
               name="password"
               value={formData.password}
               onChange={handleChange}
-              className={errors.password ? 'error' : ''}
+              className={`${errors.password ? 'error' : ''} ${theme}`}
               placeholder="Enter your password"
               disabled={isLoading}
             />
-            {errors.password && <span className="error-message">{errors.password}</span>}
+            {errors.password && <span className={`error-message ${theme}`}>{errors.password}</span>}
           </div>
 
-          <div className="form-options">
-            <label className="checkbox-container">
-              <input type="checkbox" />
-              <span className="checkmark"></span>
+          <div className={`form-options ${theme}`}>
+            <label className={`checkbox-container ${theme}`}>
+              <input type="checkbox" className={theme} />
+              <span className={`checkmark ${theme}`}></span>
               Remember me
             </label>
-            <Link to="/forgot-password" className="forgot-password-link">
+            <Link to="/forgot-password" className={`forgot-password-link ${theme}`}>
               Forgot password?
             </Link>
           </div>
 
           <button
             type="submit"
-            className={`login-button ${isLoading ? 'loading' : ''}`}
+            className={`login-button ${isLoading ? 'loading' : ''} ${theme}`}
             disabled={isLoading}
           >
             {isLoading ? (
               <>
-                <span className="spinner"></span>
+                <span className={`spinner ${theme}`}></span>
                 Signing in...
               </>
             ) : (
@@ -176,21 +176,21 @@ const LoginForm = () => {
           </button>
         </form>
 
-        <div className="login-footer">
+        <div className={`login-footer ${theme}`}>
           <p>
             Don't have an account?{' '}
-            <Link to="/register" className="register-link">
+            <Link to="/register" className={`register-link ${theme}`}>
               Sign up
             </Link>
           </p>
         </div>
 
-        <div className="demo-accounts">
-          <p className="demo-title">Demo Accounts:</p>
-          <div className="demo-buttons">
+        <div className={`demo-accounts ${theme}`}>
+          <p className={`demo-title ${theme}`}>Demo Accounts:</p>
+          <div className={`demo-buttons ${theme}`}>
             <button
               type="button"
-              className="demo-button customer"
+              className={`demo-button customer ${theme}`}
               onClick={() => setFormData({ email: 'customer@demo.com', password: 'demo123' })}
               disabled={isLoading}
             >
@@ -198,7 +198,7 @@ const LoginForm = () => {
             </button>
             <button
               type="button"
-              className="demo-button admin"
+              className={`demo-button admin ${theme}`}
               onClick={() => setFormData({ email: 'admin@demo.com', password: 'demo123' })}
               disabled={isLoading}
             >
@@ -206,7 +206,7 @@ const LoginForm = () => {
             </button>
             <button
               type="button"
-              className="demo-button vendor"
+              className={`demo-button vendor ${theme}`}
               onClick={() => setFormData({ email: 'vendor@demo.com', password: 'demo123' })}
               disabled={isLoading}
             >
