@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
+import { useTheme } from '../../hooks/useTheme';
 import './LoginForm.css';
 
 const LoginForm = () => {
@@ -12,6 +13,7 @@ const LoginForm = () => {
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
   const { login } = useAuth();
+  const { theme } = useTheme();
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -103,7 +105,7 @@ const LoginForm = () => {
   };
 
   return (
-    <div className="login-form-container">
+    <div className={`login-form-container ${theme}`}>
       <div className="login-form-card">
         <div className="login-header">
           <h2>Welcome Back</h2>
