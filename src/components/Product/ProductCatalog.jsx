@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useCart } from '../../contexts/CartContext';
+import { useTheme } from '../../contexts/ThemeContext';
 import './ProductCatalog.css';
 
 const ProductCatalog = () => {
   const { user } = useAuth();
   const { addToCart } = useCart();
+  const { theme } = useTheme();
   const [products, setProducts] = useState([]);
   const [filteredProducts, setFilteredProducts] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -109,7 +111,7 @@ const ProductCatalog = () => {
   };
 
   const ProductCard = ({ product }) => (
-    <div className="product-card">
+    <div className="product-card" data-theme={theme}>
       <div className="product-image-container">
         <img 
           src={product.image || '/images/placeholder-product.jpg'} 
@@ -168,7 +170,7 @@ const ProductCatalog = () => {
 
   if (loading) {
     return (
-      <div className="catalog-loading">
+      <div className="catalog-loading" data-theme={theme}>
         <div className="loading-spinner"></div>
         <p>Loading products...</p>
       </div>
@@ -177,7 +179,7 @@ const ProductCatalog = () => {
 
   if (error) {
     return (
-      <div className="catalog-error">
+      <div className="catalog-error" data-theme={theme}>
         <h3>Error Loading Products</h3>
         <p>{error}</p>
         <button onClick={fetchProducts} className="btn-retry">
@@ -188,7 +190,7 @@ const ProductCatalog = () => {
   }
 
   return (
-    <div className="product-catalog">
+    <div className="product-catalog" data-theme={theme}>
       <div className="catalog-header">
         <h2>Product Catalog</h2>
         <p>Discover our amazing products</p>
