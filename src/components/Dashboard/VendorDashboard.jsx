@@ -157,21 +157,21 @@ const VendorDashboard = ({ user }) => {
 
   const getStatusColor = (status) => {
     switch (status) {
-      case 'active': return 'bg-green-100 text-green-800';
-      case 'out_of_stock': return 'bg-red-100 text-red-800';
-      case 'pending': return 'bg-yellow-100 text-yellow-800';
-      case 'shipped': return 'bg-blue-100 text-blue-800';
-      default: return 'bg-gray-100 text-gray-800';
+      case 'active': return 'bg-[var(--color-success-bg)] text-[var(--color-success-text)] border-[var(--color-success-border)]';
+      case 'out_of_stock': return 'bg-[var(--color-error-bg)] text-[var(--color-error-text)] border-[var(--color-error-border)]';
+      case 'pending': return 'bg-[var(--color-warning-bg)] text-[var(--color-warning-text)] border-[var(--color-warning-border)]';
+      case 'shipped': return 'bg-[var(--color-info-bg)] text-[var(--color-info-text)] border-[var(--color-info-border)]';
+      default: return 'bg-[var(--color-muted-bg)] text-[var(--color-muted-text)] border-[var(--color-muted-border)]';
     }
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 bg-[var(--color-background)] text-[var(--color-foreground)] min-h-screen">
       {/* Header */}
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Vendor Dashboard</h1>
-          <p className="text-gray-600">Welcome back, {user?.name}</p>
+          <h1 className="text-3xl font-bold text-[var(--color-foreground)]">Vendor Dashboard</h1>
+          <p className="text-[var(--color-muted-foreground)]">Welcome back, {user?.name}</p>
         </div>
         <Button 
           onClick={() => setShowAddProduct(true)}
@@ -184,49 +184,49 @@ const VendorDashboard = ({ user }) => {
 
       {/* Analytics Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <Card>
+        <Card className="bg-[var(--color-card)] border-[var(--color-border)]">
           <CardContent className="flex items-center p-6">
             <div className="flex items-center">
-              <DollarSign className="h-8 w-8 text-green-600" />
+              <DollarSign className="h-8 w-8 text-[var(--color-success)]" />
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">Total Revenue</p>
-                <p className="text-2xl font-bold text-gray-900">${analytics.totalRevenue.toFixed(2)}</p>
+                <p className="text-sm font-medium text-[var(--color-muted-foreground)]">Total Revenue</p>
+                <p className="text-2xl font-bold text-[var(--color-foreground)]">${analytics.totalRevenue.toFixed(2)}</p>
               </div>
             </div>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="bg-[var(--color-card)] border-[var(--color-border)]">
           <CardContent className="flex items-center p-6">
             <div className="flex items-center">
-              <ShoppingCart className="h-8 w-8 text-blue-600" />
+              <ShoppingCart className="h-8 w-8 text-[var(--color-primary)]" />
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">Total Orders</p>
-                <p className="text-2xl font-bold text-gray-900">{analytics.totalOrders}</p>
+                <p className="text-sm font-medium text-[var(--color-muted-foreground)]">Total Orders</p>
+                <p className="text-2xl font-bold text-[var(--color-foreground)]">{analytics.totalOrders}</p>
               </div>
             </div>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="bg-[var(--color-card)] border-[var(--color-border)]">
           <CardContent className="flex items-center p-6">
             <div className="flex items-center">
-              <Package className="h-8 w-8 text-purple-600" />
+              <Package className="h-8 w-8 text-[var(--color-accent)]" />
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">Total Products</p>
-                <p className="text-2xl font-bold text-gray-900">{analytics.totalProducts}</p>
+                <p className="text-sm font-medium text-[var(--color-muted-foreground)]">Total Products</p>
+                <p className="text-2xl font-bold text-[var(--color-foreground)]">{analytics.totalProducts}</p>
               </div>
             </div>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="bg-[var(--color-card)] border-[var(--color-border)]">
           <CardContent className="flex items-center p-6">
             <div className="flex items-center">
-              <AlertCircle className="h-8 w-8 text-red-600" />
+              <AlertCircle className="h-8 w-8 text-[var(--color-destructive)]" />
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">Low Stock</p>
-                <p className="text-2xl font-bold text-gray-900">{analytics.lowStockCount}</p>
+                <p className="text-sm font-medium text-[var(--color-muted-foreground)]">Low Stock</p>
+                <p className="text-2xl font-bold text-[var(--color-foreground)]">{analytics.lowStockCount}</p>
               </div>
             </div>
           </CardContent>
@@ -235,9 +235,9 @@ const VendorDashboard = ({ user }) => {
 
       {/* Add/Edit Product Modal */}
       {showAddProduct && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md mx-4">
-            <h3 className="text-lg font-semibold mb-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-6 w-full max-w-md mx-4 shadow-lg">
+            <h3 className="text-lg font-semibold mb-4 text-[var(--color-foreground)]">
               {editingProduct ? 'Edit Product' : 'Add New Product'}
             </h3>
             <div className="space-y-4">
@@ -245,10 +245,11 @@ const VendorDashboard = ({ user }) => {
                 placeholder="Product Name"
                 value={newProduct.name}
                 onChange={(e) => setNewProduct({...newProduct, name: e.target.value})}
+                className="bg-[var(--color-background)] border-[var(--color-border)] text-[var(--color-foreground)]"
               />
               <textarea
                 placeholder="Description"
-                className="w-full p-2 border border-gray-300 rounded-md"
+                className="w-full p-2 border border-[var(--color-border)] rounded-md bg-[var(--color-background)] text-[var(--color-foreground)] placeholder:text-[var(--color-muted-foreground)]"
                 rows="3"
                 value={newProduct.description}
                 onChange={(e) => setNewProduct({...newProduct, description: e.target.value})}
@@ -259,22 +260,26 @@ const VendorDashboard = ({ user }) => {
                 step="0.01"
                 value={newProduct.price}
                 onChange={(e) => setNewProduct({...newProduct, price: e.target.value})}
+                className="bg-[var(--color-background)] border-[var(--color-border)] text-[var(--color-foreground)]"
               />
               <Input
                 placeholder="Stock Quantity"
                 type="number"
                 value={newProduct.stock}
                 onChange={(e) => setNewProduct({...newProduct, stock: e.target.value})}
+                className="bg-[var(--color-background)] border-[var(--color-border)] text-[var(--color-foreground)]"
               />
               <Input
                 placeholder="Category"
                 value={newProduct.category}
                 onChange={(e) => setNewProduct({...newProduct, category: e.target.value})}
+                className="bg-[var(--color-background)] border-[var(--color-border)] text-[var(--color-foreground)]"
               />
               <Input
                 placeholder="Image URL"
                 value={newProduct.image}
                 onChange={(e) => setNewProduct({...newProduct, image: e.target.value})}
+                className="bg-[var(--color-background)] border-[var(--color-border)] text-[var(--color-foreground)]"
               />
             </div>
             <div className="flex gap-2 mt-6">
@@ -302,9 +307,9 @@ const VendorDashboard = ({ user }) => {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Products Management */}
-        <Card>
+        <Card className="bg-[var(--color-card)] border-[var(--color-border)]">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
+            <CardTitle className="flex items-center gap-2 text-[var(--color-foreground)]">
               <Package className="h-5 w-5" />
               Product Inventory
             </CardTitle>
@@ -312,13 +317,13 @@ const VendorDashboard = ({ user }) => {
           <CardContent>
             <div className="space-y-4">
               {products.map((product) => (
-                <div key={product.id} className="flex items-center justify-between p-4 border rounded-lg">
+                <div key={product.id} className="flex items-center justify-between p-4 border border-[var(--color-border)] rounded-lg bg-[var(--color-background)]">
                   <div className="flex-1">
-                    <h4 className="font-medium">{product.name}</h4>
-                    <p className="text-sm text-gray-600">
+                    <h4 className="font-medium text-[var(--color-foreground)]">{product.name}</h4>
+                    <p className="text-sm text-[var(--color-muted-foreground)]">
                       ${product.price} • Stock: {product.stock} • Sales: {product.sales}
                     </p>
-                    <Badge className={getStatusColor(product.status)}>
+                    <Badge className={`${getStatusColor(product.status)} border mt-1`}>
                       {product.status.replace('_', ' ')}
                     </Badge>
                   </div>
@@ -327,6 +332,7 @@ const VendorDashboard = ({ user }) => {
                       variant="outline"
                       size="sm"
                       onClick={() => handleEditProduct(product)}
+                      className="border-[var(--color-border)] text-[var(--color-foreground)] hover:bg-[var(--color-muted)]"
                     >
                       <Edit className="h-4 w-4" />
                     </Button>
@@ -334,7 +340,7 @@ const VendorDashboard = ({ user }) => {
                       variant="outline"
                       size="sm"
                       onClick={() => handleDeleteProduct(product.id)}
-                      className="text-red-600 hover:text-red-700"
+                      className="border-[var(--color-border)] text-[var(--color-destructive)] hover:bg-[var(--color-destructive)] hover:text-[var(--color-destructive-foreground)]"
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>
@@ -346,9 +352,9 @@ const VendorDashboard = ({ user }) => {
         </Card>
 
         {/* Recent Orders */}
-        <Card>
+        <Card className="bg-[var(--color-card)] border-[var(--color-border)]">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
+            <CardTitle className="flex items-center gap-2 text-[var(--color-foreground)]">
               <TrendingUp className="h-5 w-5" />
               Recent Orders
             </CardTitle>
@@ -356,18 +362,22 @@ const VendorDashboard = ({ user }) => {
           <CardContent>
             <div className="space-y-4">
               {orders.map((order) => (
-                <div key={order.id} className="flex items-center justify-between p-4 border rounded-lg">
+                <div key={order.id} className="flex items-center justify-between p-4 border border-[var(--color-border)] rounded-lg bg-[var(--color-background)]">
                   <div className="flex-1">
-                    <h4 className="font-medium">{order.id}</h4>
-                    <p className="text-sm text-gray-600">
+                    <h4 className="font-medium text-[var(--color-foreground)]">{order.id}</h4>
+                    <p className="text-sm text-[var(--color-muted-foreground)]">
                       {order.customer} • ${order.total}
                     </p>
-                    <p className="text-xs text-gray-500">{order.date}</p>
-                    <Badge className={getStatusColor(order.status)}>
+                    <p className="text-xs text-[var(--color-muted-foreground)]">{order.date}</p>
+                    <Badge className={`${getStatusColor(order.status)} border mt-1`}>
                       {order.status}
                     </Badge>
                   </div>
-                  <Button variant="outline" size="sm">
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    className="border-[var(--color-border)] text-[var(--color-foreground)] hover:bg-[var(--color-muted)]"
+                  >
                     <Eye className="h-4 w-4" />
                   </Button>
                 </div>
@@ -378,12 +388,12 @@ const VendorDashboard = ({ user }) => {
       </div>
 
       {/* Sales Analytics */}
-      <Card>
+      <Card className="bg-[var(--color-card)] border-[var(--color-border)]">
         <CardHeader>
-          <CardTitle>Sales Performance</CardTitle>
+          <CardTitle className="text-[var(--color-foreground)]">Sales Performance</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="text-center py-8 text-gray-500">
+          <div className="text-center py-8 text-[var(--color-muted-foreground)]">
             <TrendingUp className="h-12 w-12 mx-auto mb-4 opacity-50" />
             <p>Sales analytics chart would be implemented here</p>
             <p className="text-sm">Integration with charting library (Chart.js, Recharts, etc.)</p>

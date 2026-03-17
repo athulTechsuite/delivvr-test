@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { useCart } from '../../hooks/useCart';
+import { useTheme } from '../../contexts/ThemeContext';
 import './ShoppingCart.css';
 
 const ShoppingCart = ({ isOpen, onClose }) => {
@@ -13,6 +14,7 @@ const ShoppingCart = ({ isOpen, onClose }) => {
     getCartTotal,
     getCartCount 
   } = useCart();
+  const { theme } = useTheme();
 
   const [isProcessingCheckout, setIsProcessingCheckout] = useState(false);
 
@@ -59,8 +61,8 @@ const ShoppingCart = ({ isOpen, onClose }) => {
 
   return (
     <>
-      <div className="cart-overlay" onClick={onClose}></div>
-      <div className="shopping-cart">
+      <div className="cart-overlay" onClick={onClose} data-theme={theme}></div>
+      <div className="shopping-cart" data-theme={theme}>
         <div className="cart-header">
           <h2>Shopping Cart ({getCartCount()})</h2>
           <button 
