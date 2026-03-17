@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../hooks/useAuth';
+import { useTheme } from '../../contexts/ThemeContext';
 import { orderService } from '../../services/orderService';
 import { wishlistService } from '../../services/wishlistService';
 import { userService } from '../../services/userService';
@@ -7,6 +8,7 @@ import './CustomerDashboard.css';
 
 const CustomerDashboard = () => {
   const { user } = useAuth();
+  const { theme } = useTheme();
   const [activeTab, setActiveTab] = useState('overview');
   const [orders, setOrders] = useState([]);
   const [wishlist, setWishlist] = useState([]);
@@ -59,7 +61,7 @@ const CustomerDashboard = () => {
 
   if (loading) {
     return (
-      <div className="dashboard-loading">
+      <div className={`dashboard-loading theme-${theme}`}>
         <div className="loading-spinner"></div>
         <p>Loading dashboard...</p>
       </div>
@@ -67,7 +69,7 @@ const CustomerDashboard = () => {
   }
 
   return (
-    <div className="customer-dashboard">
+    <div className={`customer-dashboard theme-${theme}`}>
       <div className="dashboard-header">
         <h1>Welcome back, {user.firstName}!</h1>
         <p>Manage your account, orders, and wishlist</p>
@@ -109,6 +111,13 @@ const CustomerDashboard = () => {
           <span className="nav-icon">👤</span>
           Profile
         </button>
+        <button
+          className={`nav-tab ${activeTab === 'settings' ? 'active' : ''}`}
+          onClick={() => setActiveTab('settings')}
+        >
+          <span className="nav-icon">⚙️</span>
+          Settings
+        </button>
       </div>
 
       <div className="dashboard-content">
@@ -129,6 +138,9 @@ const CustomerDashboard = () => {
             profile={userProfile} 
             onUpdateProfile={handleUpdateProfile}
           />
+        )}
+        {activeTab === 'settings' && (
+          <SettingsTab />
         )}
       </div>
     </div>
@@ -510,6 +522,117 @@ const ProfileTab = ({ profile, onUpdateProfile }) => {
           </div>
         )}
       </form>
+    </div>
+  );
+};
+
+const SettingsTab = () => {
+  const { theme, setTheme } = useTheme();
+
+  const handleThemeChange = (newTheme) => {
+    setTheme(newTheme);
+  };
+
+  return (
+    <div className="settings-tab">
+      <div className="settings-header">
+        <h2>Settings</h2>
+        <p>Customize your app experience</p>
+      </div>
+
+      <div className="settings-sections">
+        <div className="settings-section">
+          <h3>Appearance</h3>
+          <div className="setting-item">
+            <div className="setting-info">
+              <label>Theme</label>
+              <p>Choose your preferred color scheme</p>
+            </div>
+            <div className="theme-selector">
+              <button
+                className={`theme-option ${theme === 'light' ? 'active' : ''}`}
+                onClick={() => handleThemeChange('light')}
+                aria-label="Light theme"
+              >
+                <span className="theme-icon">☀️</span>
+                Light
+              </button>
+              <button
+                className={`theme-option ${theme === 'dark' ? 'active' : ''}`}
+                onClick={() => handleThemeChange('dark')}
+                aria-label="Dark theme"
+              >
+                <span className="theme-icon">🌙</span>
+                Dark
+              </button>
+              <button
+                className={`theme-option ${theme === 'system' ? 'active' : ''}`}
+                onClick={() => handleThemeChange('system')}
+                aria-label="System default theme"
+              >
+                <span className="theme-icon">💻</span>
+                System
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="settings-section">
+          <h3>Notifications</h3>
+          <div className="setting-item">
+            <div className="setting-info">
+              <label>Email Notifications</label>
+              <p>Receive updates about your orders and promotions</p>
+            </div>
+            <div className="setting-control">
+              <label className="switch">
+                <input type="checkbox" defaultChecked />
+                <span className="slider"></span>
+              </label>
+            </div>
+          </div>
+          <div className="setting-item">
+            <div className="setting-info">
+              <label>Push Notifications</label>
+              <p>Get notified about order updates and special offers</p>
+            </div>
+            <div className="setting-control">
+              <label className="switch">
+                <input type="checkbox" defaultChecked />
+                <span className="slider"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div className="settings-section">
+          <h3>Privacy</h3>
+          <div className="setting-item">
+            <div className="setting-info">
+              <label>Data Collection</label>
+              <p>Allow collection of usage data to improve your experience</p>
+            </div>
+            <div className="setting-control">
+              <label className="switch">
+                <input type="checkbox" defaultChecked />
+                <span className="slider"></span>
+              </label>
+            </div>
+          </div>
+          <div className="setting-item">
+            <div className="setting-info">
+              <label>Marketing Communications</label>
+              <p>Receive promotional emails and personalized recommendations</p>
+            </div>
+            <div className="setting-control">
+              <label className="switch">
+                <input type="checkbox" />
+                <span className="slider"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 };
