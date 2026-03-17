@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { useCart } from '../../hooks/useCart';
+import { useTheme } from '../../contexts/ThemeContext';
 import './ShoppingCart.css';
 
 const ShoppingCart = ({ isOpen, onClose }) => {
@@ -13,6 +14,7 @@ const ShoppingCart = ({ isOpen, onClose }) => {
     getCartTotal,
     getCartCount 
   } = useCart();
+  const { theme } = useTheme();
 
   const [isProcessingCheckout, setIsProcessingCheckout] = useState(false);
 
@@ -59,12 +61,12 @@ const ShoppingCart = ({ isOpen, onClose }) => {
 
   return (
     <>
-      <div className="cart-overlay" onClick={onClose}></div>
-      <div className="shopping-cart">
-        <div className="cart-header">
+      <div className={`cart-overlay ${theme}`} onClick={onClose}></div>
+      <div className={`shopping-cart ${theme}`}>
+        <div className={`cart-header ${theme}`}>
           <h2>Shopping Cart ({getCartCount()})</h2>
           <button 
-            className="cart-close-btn"
+            className={`cart-close-btn ${theme}`}
             onClick={onClose}
             aria-label="Close cart"
           >
@@ -72,12 +74,12 @@ const ShoppingCart = ({ isOpen, onClose }) => {
           </button>
         </div>
 
-        <div className="cart-content">
+        <div className={`cart-content ${theme}`}>
           {cartItems.length === 0 ? (
-            <div className="empty-cart">
+            <div className={`empty-cart ${theme}`}>
               <p>Your cart is empty</p>
               <button 
-                className="continue-shopping-btn"
+                className={`continue-shopping-btn ${theme}`}
                 onClick={onClose}
               >
                 Continue Shopping
@@ -85,9 +87,9 @@ const ShoppingCart = ({ isOpen, onClose }) => {
             </div>
           ) : (
             <>
-              <div className="cart-items">
+              <div className={`cart-items ${theme}`}>
                 {cartItems.map((item) => (
-                  <div key={item.id} className="cart-item">
+                  <div key={item.id} className={`cart-item ${theme}`}>
                     <div className="item-image">
                       <img 
                         src={item.image || '/images/placeholder-product.jpg'} 
@@ -98,34 +100,34 @@ const ShoppingCart = ({ isOpen, onClose }) => {
                       />
                     </div>
                     
-                    <div className="item-details">
-                      <h4 className="item-name">{item.name}</h4>
-                      <p className="item-price">{formatPrice(item.price)}</p>
+                    <div className={`item-details ${theme}`}>
+                      <h4 className={`item-name ${theme}`}>{item.name}</h4>
+                      <p className={`item-price ${theme}`}>{formatPrice(item.price)}</p>
                       
-                      <div className="quantity-controls">
+                      <div className={`quantity-controls ${theme}`}>
                         <button 
-                          className="quantity-btn"
+                          className={`quantity-btn ${theme}`}
                           onClick={() => handleQuantityChange(item.id, item.quantity - 1)}
                           disabled={item.quantity <= 1}
                         >
                           -
                         </button>
-                        <span className="quantity">{item.quantity}</span>
+                        <span className={`quantity ${theme}`}>{item.quantity}</span>
                         <button 
-                          className="quantity-btn"
+                          className={`quantity-btn ${theme}`}
                           onClick={() => handleQuantityChange(item.id, item.quantity + 1)}
                         >
                           +
                         </button>
                       </div>
                       
-                      <p className="item-total">
+                      <p className={`item-total ${theme}`}>
                         Total: {formatPrice(item.price * item.quantity)}
                       </p>
                     </div>
                     
                     <button 
-                      className="remove-item-btn"
+                      className={`remove-item-btn ${theme}`}
                       onClick={() => removeFromCart(item.id)}
                       aria-label="Remove item"
                     >
@@ -135,21 +137,21 @@ const ShoppingCart = ({ isOpen, onClose }) => {
                 ))}
               </div>
 
-              <div className="cart-summary">
-                <div className="cart-total">
+              <div className={`cart-summary ${theme}`}>
+                <div className={`cart-total ${theme}`}>
                   <h3>Total: {formatPrice(getCartTotal())}</h3>
                 </div>
                 
-                <div className="cart-actions">
+                <div className={`cart-actions ${theme}`}>
                   <button 
-                    className="clear-cart-btn"
+                    className={`clear-cart-btn ${theme}`}
                     onClick={clearCart}
                   >
                     Clear Cart
                   </button>
                   
                   <button 
-                    className="checkout-btn"
+                    className={`checkout-btn ${theme}`}
                     onClick={handleCheckout}
                     disabled={isProcessingCheckout}
                   >
@@ -158,7 +160,7 @@ const ShoppingCart = ({ isOpen, onClose }) => {
                 </div>
                 
                 <button 
-                  className="continue-shopping-btn secondary"
+                  className={`continue-shopping-btn secondary ${theme}`}
                   onClick={onClose}
                 >
                   Continue Shopping
