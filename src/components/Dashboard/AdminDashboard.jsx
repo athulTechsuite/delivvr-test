@@ -22,6 +22,18 @@ import {
   Image as ImageIcon
 } from 'lucide-react';
 import { useTheme } from '../../contexts/ThemeContext';
+import { ItemTable } from './components/ItemTable';
+import { ItemFilters } from './components/ItemFilters';
+import { ItemModal } from './components/ItemModal';
+import { config } from '../../config/admin.config';
+import { useWebSocket } from '../../hooks/useWebSocket';
+import { validateForm, sanitizeInput } from '../../utils/validation';
+
+const ITEM_STATUS = {
+  ACTIVE: 'active',
+  INACTIVE: 'inactive',
+  OUT_OF_STOCK: 'out_of_stock'
+} as const;
 
 const AdminDashboard = () => {
   const { theme, isDark } = useTheme();
@@ -41,7 +53,7 @@ const AdminDashboard = () => {
   });
   const [selectedItems, setSelectedItems] = useState(new Set());
   const [showItemModal, setShowItemModal] = useState(false);
-  const [modalMode, setModalMode] = useState('add'); // 'add', 'edit', 'view'
+  const [modalMode, setModalMode] = useState('add');
   const [currentItem, setCurrentItem] = useState(null);
   const [bulkActionMenu, setBulkActionMenu] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
@@ -51,6 +63,9 @@ const AdminDashboard = () => {
   const [auditLog, setAuditLog] = useState([]);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [categories, setCategories] = useState([]);
+  const [formErrors, setFormErrors] = useState({});
+  const [pendingOperations, setPendingOperations] = useState(new Set());
 
   // Form state for item modal
   const [itemForm, setItemForm] = useState({
@@ -60,11 +75,68 @@ const AdminDashboard = () => {
     price: '',
     stock: '',
     sku: '',
-    status: 'active',
+    status: ITEM_STATUS.ACTIVE,
     images: []
   });
 
-  const categories = ['Electronics', 'Sports', 'Appliances', 'Clothing', 'Books', 'Home & Garden'];
+  // WebSocket connection for real-time updates
+  const { isConnected, lastMessage } = useWebSocket(process.env.REACT_APP_WS_URL || 'ws://localhost:8080');
+
+  useEffect(() => {
+    // Load categories from config
+    const loadCategories = async () => {
+      try {
+        // Try to fetch from API first, fallback to config
+        const response = await fetch('/api/categories');
+        if (response.ok) {
+          const apiCategories = await response.json();
+          setCategories(apiCategories);
+        } else {
+          throw new Error('API not available');
+        }
+      } catch (error) {
+        console.warn('Using fallback categories from config');
+        setCategories(config.categories);
+      }
+    };
+
+    loadCategories();
+  }, []);
+
+  useEffect(() => {
+    // Handle real-time WebSocket updates
+    if (lastMessage) {
+      try {
+        const data = JSON.parse(lastMessage);
+        switch (data.type) {
+          case 'PRODUCT_UPDATED':
+            setProducts(prev => prev.map(product => 
+              product.id === data.productId 
+                ? { ...product, ...data.changes, updatedAt: data.timestamp }
+                : product
+            ));
+            if (data.updatedBy !== 'current_user') {
+              showMessage('info', `Product "${data.productName}" was updated by ${data.updatedBy}`);
+            }
+            break;
+          case 'PRODUCT_CREATED':
+            if (data.createdBy !== 'current_user') {
+              setProducts(prev => [...prev, data.product]);
+              showMessage('info', `New product "${data.product.name}" was added by ${data.createdBy}`);
+            }
+            break;
+          case 'PRODUCT_DELETED':
+            if (data.deletedBy !== 'current_user') {
+              setProducts(prev => prev.filter(product => product.id !== data.productId));
+              showMessage('info', `Product "${data.productName}" was deleted by ${data.deletedBy}`);
+            }
+            break;
+        }
+      } catch (error) {
+        console.error('Error parsing WebSocket message:', error);
+      }
+    }
+  }, [lastMessage]);
 
   useEffect(() => {
     // Simulate API calls to fetch admin data
@@ -85,11 +157,12 @@ const AdminDashboard = () => {
             price: 99.99, 
             stock: 50, 
             category: 'Electronics', 
-            status: 'active',
+            status: ITEM_STATUS.ACTIVE,
             sku: 'WH-001',
             images: ['headphones1.jpg'],
             createdAt: '2024-01-15',
-            updatedAt: '2024-01-30'
+            updatedAt: '2024-01-30',
+            version: 1
           },
           { 
             id: 2, 
@@ -98,11 +171,12 @@ const AdminDashboard = () => {
             price: 129.99, 
             stock: 30, 
             category: 'Sports', 
-            status: 'active',
+            status: ITEM_STATUS.ACTIVE,
             sku: 'RS-002',
             images: ['shoes1.jpg'],
             createdAt: '2024-01-20',
-            updatedAt: '2024-01-25'
+            updatedAt: '2024-01-25',
+            version: 1
           },
           { 
             id: 3, 
@@ -111,11 +185,12 @@ const AdminDashboard = () => {
             price: 79.99, 
             stock: 0, 
             category: 'Appliances', 
-            status: 'out_of_stock',
+            status: ITEM_STATUS.OUT_OF_STOCK,
             sku: 'CM-003',
             images: ['coffee1.jpg'],
             createdAt: '2024-01-10',
-            updatedAt: '2024-01-28'
+            updatedAt: '2024-01-28',
+            version: 1
           },
           { 
             id: 4, 
@@ -124,11 +199,12 @@ const AdminDashboard = () => {
             price: 24.99, 
             stock: 100, 
             category: 'Electronics', 
-            status: 'active',
+            status: ITEM_STATUS.ACTIVE,
             sku: 'SC-004',
             images: ['case1.jpg'],
             createdAt: '2024-01-12',
-            updatedAt: '2024-01-22'
+            updatedAt: '2024-01-22',
+            version: 1
           }
         ]);
 
@@ -160,27 +236,12 @@ const AdminDashboard = () => {
         setLoading(false);
       } catch (error) {
         console.error('Error fetching admin data:', error);
-        setError('Failed to load admin data');
+        showMessage('error', 'Failed to load admin data');
         setLoading(false);
       }
     };
 
     fetchAdminData();
-  }, []);
-
-  // Real-time updates simulation
-  useEffect(() => {
-    const interval = setInterval(() => {
-      // Simulate real-time updates
-      setProducts(prevProducts => 
-        prevProducts.map(product => ({
-          ...product,
-          updatedAt: new Date().toISOString().split('T')[0]
-        }))
-      );
-    }, 30000); // Update every 30 seconds
-
-    return () => clearInterval(interval);
   }, []);
 
   // Filter and search items
@@ -205,13 +266,54 @@ const AdminDashboard = () => {
     currentPage * itemsPerPage
   );
 
+  const validateItemForm = (formData) => {
+    const errors = {};
+    
+    // Name validation
+    if (!formData.name || formData.name.trim().length < 2) {
+      errors.name = 'Name must be at least 2 characters long';
+    }
+    
+    // SKU validation
+    if (!formData.sku || !/^[A-Z]{2,3}-\d{3,}$/.test(formData.sku)) {
+      errors.sku = 'SKU must follow format: ABC-123 (letters-numbers)';
+    }
+    
+    // Price validation
+    const price = parseFloat(formData.price);
+    if (!formData.price || isNaN(price) || price <= 0) {
+      errors.price = 'Price must be a positive number';
+    }
+    
+    // Stock validation
+    const stock = parseInt(formData.stock);
+    if (!formData.stock || isNaN(stock) || stock < 0) {
+      errors.stock = 'Stock must be a non-negative integer';
+    }
+    
+    // Category validation
+    if (!formData.category) {
+      errors.category = 'Please select a category';
+    }
+    
+    // Status validation
+    if (!Object.values(ITEM_STATUS).includes(formData.status)) {
+      errors.status = 'Invalid status value';
+    }
+    
+    return errors;
+  };
+
   const showMessage = (type, message) => {
     if (type === 'success') {
       setSuccess(message);
-      setTimeout(() => setSuccess(''), 3000);
-    } else {
+      setTimeout(() => setSuccess(''), 5000);
+    } else if (type === 'error') {
       setError(message);
-      setTimeout(() => setError(''), 3000);
+      setTimeout(() => setError(''), 5000);
+    } else if (type === 'info') {
+      // Could add info message state if needed
+      console.info(message);
     }
   };
 
@@ -226,91 +328,244 @@ const AdminDashboard = () => {
     setAuditLog(prev => [newLogEntry, ...prev]);
   };
 
+  const handleFileUpload = async (files) => {
+    try {
+      const uploadPromises = Array.from(files).map(async (file) => {
+        const formData = new FormData();
+        formData.append('file', file);
+        
+        const response = await fetch('/api/upload', {
+          method: 'POST',
+          body: formData
+        });
+        
+        if (!response.ok) {
+          throw new Error(`Failed to upload ${file.name}`);
+        }
+        
+        const result = await response.json();
+        return result.url;
+      });
+
+      const uploadedUrls = await Promise.all(uploadPromises);
+      return uploadedUrls;
+    } catch (error) {
+      console.error('File upload error:', error);
+      throw error;
+    }
+  };
+
   const handleItemSubmit = async (e) => {
     e.preventDefault();
+    
     try {
-      if (modalMode === 'add') {
-        const newItem = {
-          ...itemForm,
-          id: products.length + 1,
-          price: parseFloat(itemForm.price),
-          stock: parseInt(itemForm.stock),
-          createdAt: new Date().toISOString().split('T')[0],
-          updatedAt: new Date().toISOString().split('T')[0]
-        };
-        setProducts(prev => [...prev, newItem]);
-        logAuditAction('Created', itemForm.name);
-        showMessage('success', 'Item created successfully');
-      } else if (modalMode === 'edit') {
-        setProducts(prev => prev.map(item => 
-          item.id === currentItem.id 
-            ? { 
-                ...item, 
-                ...itemForm, 
-                price: parseFloat(itemForm.price),
-                stock: parseInt(itemForm.stock),
-                updatedAt: new Date().toISOString().split('T')[0]
-              }
-            : item
-        ));
-        logAuditAction('Updated', itemForm.name);
-        showMessage('success', 'Item updated successfully');
+      // Sanitize input data
+      const sanitizedForm = {
+        name: sanitizeInput(itemForm.name),
+        description: sanitizeInput(itemForm.description),
+        category: sanitizeInput(itemForm.category),
+        price: sanitizeInput(itemForm.price),
+        stock: sanitizeInput(itemForm.stock),
+        sku: sanitizeInput(itemForm.sku),
+        status: itemForm.status,
+        images: itemForm.images
+      };
+
+      // Validate form
+      const errors = validateItemForm(sanitizedForm);
+      if (Object.keys(errors).length > 0) {
+        setFormErrors(errors);
+        showMessage('error', 'Please fix the form errors before submitting');
+        return;
       }
+
+      setFormErrors({});
+      
+      // Handle file uploads if any
+      if (itemForm.imageFiles && itemForm.imageFiles.length > 0) {
+        try {
+          const uploadedUrls = await handleFileUpload(itemForm.imageFiles);
+          sanitizedForm.images = [...sanitizedForm.images, ...uploadedUrls];
+        } catch (error) {
+          showMessage('error', 'Failed to upload images');
+          return;
+        }
+      }
+
+      if (modalMode === 'add') {
+        const operationId = Date.now().toString();
+        setPendingOperations(prev => new Set([...prev, operationId]));
+        
+        try {
+          const newItem = {
+            ...sanitizedForm,
+            id: products.length + 1,
+            price: parseFloat(sanitizedForm.price),
+            stock: parseInt(sanitizedForm.stock),
+            createdAt: new Date().toISOString().split('T')[0],
+            updatedAt: new Date().toISOString().split('T')[0],
+            version: 1
+          };
+          
+          setProducts(prev => [...prev, newItem]);
+          logAuditAction('Created', sanitizedForm.name);
+          showMessage('success', 'Item created successfully');
+        } finally {
+          setPendingOperations(prev => {
+            const newSet = new Set(prev);
+            newSet.delete(operationId);
+            return newSet;
+          });
+        }
+      } else if (modalMode === 'edit') {
+        const operationId = `edit-${currentItem.id}`;
+        setPendingOperations(prev => new Set([...prev, operationId]));
+        
+        try {
+          // Check for version conflicts (optimistic locking)
+          const currentProduct = products.find(p => p.id === currentItem.id);
+          if (currentProduct && currentProduct.version !== currentItem.version) {
+            showMessage('error', 'This item has been modified by another user. Please refresh and try again.');
+            return;
+          }
+          
+          setProducts(prev => prev.map(item => 
+            item.id === currentItem.id 
+              ? { 
+                  ...item, 
+                  ...sanitizedForm, 
+                  price: parseFloat(sanitizedForm.price),
+                  stock: parseInt(sanitizedForm.stock),
+                  updatedAt: new Date().toISOString().split('T')[0],
+                  version: item.version + 1
+                }
+              : item
+          ));
+          logAuditAction('Updated', sanitizedForm.name);
+          showMessage('success', 'Item updated successfully');
+        } finally {
+          setPendingOperations(prev => {
+            const newSet = new Set(prev);
+            newSet.delete(operationId);
+            return newSet;
+          });
+        }
+      }
+      
       setShowItemModal(false);
       resetItemForm();
     } catch (error) {
-      showMessage('error', 'Failed to save item');
+      console.error('Error saving item:', error);
+      showMessage('error', 'Failed to save item. Please try again.');
     }
   };
 
   const handleDeleteItem = async () => {
     try {
-      setProducts(prev => prev.filter(item => item.id !== itemToDelete.id));
-      logAuditAction('Deleted', itemToDelete.name);
-      showMessage('success', 'Item deleted successfully');
-      setShowDeleteConfirm(false);
-      setItemToDelete(null);
+      const operationId = `delete-${itemToDelete.id}`;
+      setPendingOperations(prev => new Set([...prev, operationId]));
+      
+      try {
+        setProducts(prev => prev.filter(item => item.id !== itemToDelete.id));
+        logAuditAction('Deleted', itemToDelete.name);
+        showMessage('success', 'Item deleted successfully');
+        setShowDeleteConfirm(false);
+        setItemToDelete(null);
+      } finally {
+        setPendingOperations(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(operationId);
+          return newSet;
+        });
+      }
     } catch (error) {
-      showMessage('error', 'Failed to delete item');
+      console.error('Error deleting item:', error);
+      showMessage('error', 'Failed to delete item. Please try again.');
     }
   };
 
   const handleBulkDelete = async () => {
     try {
-      const itemsToDelete = products.filter(item => selectedItems.has(item.id));
-      setProducts(prev => prev.filter(item => !selectedItems.has(item.id)));
+      const operationId = 'bulk-delete';
+      setPendingOperations(prev => new Set([...prev, operationId]));
       
-      itemsToDelete.forEach(item => {
-        logAuditAction('Bulk Deleted', item.name);
-      });
-      
-      showMessage('success', `${selectedItems.size} items deleted successfully`);
-      setSelectedItems(new Set());
-      setBulkActionMenu(false);
+      try {
+        const itemsToDelete = products.filter(item => selectedItems.has(item.id));
+        
+        // Check for concurrent modifications
+        const conflictingItems = itemsToDelete.filter(item => 
+          pendingOperations.has(`edit-${item.id}`)
+        );
+        
+        if (conflictingItems.length > 0) {
+          showMessage('error', 'Some items are being modified. Please wait and try again.');
+          return;
+        }
+        
+        setProducts(prev => prev.filter(item => !selectedItems.has(item.id)));
+        
+        itemsToDelete.forEach(item => {
+          logAuditAction('Bulk Deleted', item.name);
+        });
+        
+        showMessage('success', `${selectedItems.size} items deleted successfully`);
+        setSelectedItems(new Set());
+        setBulkActionMenu(false);
+      } finally {
+        setPendingOperations(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(operationId);
+          return newSet;
+        });
+      }
     } catch (error) {
-      showMessage('error', 'Failed to delete items');
+      console.error('Error in bulk delete:', error);
+      showMessage('error', 'Failed to delete items. Please try again.');
     }
   };
 
   const handleBulkStatusUpdate = async (status) => {
     try {
-      setProducts(prev => prev.map(item => 
-        selectedItems.has(item.id) 
-          ? { ...item, status, updatedAt: new Date().toISOString().split('T')[0] }
-          : item
-      ));
+      if (!Object.values(ITEM_STATUS).includes(status)) {
+        showMessage('error', 'Invalid status value');
+        return;
+      }
+
+      const operationId = 'bulk-status-update';
+      setPendingOperations(prev => new Set([...prev, operationId]));
       
-      showMessage('success', `${selectedItems.size} items updated successfully`);
-      setSelectedItems(new Set());
-      setBulkActionMenu(false);
+      try {
+        setProducts(prev => prev.map(item => 
+          selectedItems.has(item.id) 
+            ? { 
+                ...item, 
+                status, 
+                updatedAt: new Date().toISOString().split('T')[0],
+                version: item.version + 1 
+              }
+            : item
+        ));
+        
+        showMessage('success', `${selectedItems.size} items updated successfully`);
+        setSelectedItems(new Set());
+        setBulkActionMenu(false);
+      } finally {
+        setPendingOperations(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(operationId);
+          return newSet;
+        });
+      }
     } catch (error) {
-      showMessage('error', 'Failed to update items');
+      console.error('Error in bulk status update:', error);
+      showMessage('error', 'Failed to update items. Please try again.');
     }
   };
 
   const openItemModal = (mode, item = null) => {
     setModalMode(mode);
     setCurrentItem(item);
+    setFormErrors({});
     if (item) {
       setItemForm({
         name: item.name,
@@ -320,7 +575,8 @@ const AdminDashboard = () => {
         stock: item.stock.toString(),
         sku: item.sku,
         status: item.status,
-        images: item.images || []
+        images: item.images || [],
+        imageFiles: []
       });
     } else {
       resetItemForm();
@@ -336,9 +592,11 @@ const AdminDashboard = () => {
       price: '',
       stock: '',
       sku: '',
-      status: 'active',
-      images: []
+      status: ITEM_STATUS.ACTIVE,
+      images: [],
+      imageFiles: []
     });
+    setFormErrors({});
   };
 
   const toggleItemSelection = (itemId) => {
@@ -362,35 +620,35 @@ const AdminDashboard = () => {
   };
 
   const StatCard = ({ title, value, icon: Icon, trend, color = 'blue' }) => (
-    <div className={`rounded-lg shadow-md p-6 border-l-4 border-blue-500 ${isDark ? 'bg-gray-800' : 'bg-white'}`}>
+    <div className={`rounded-lg shadow-md p-4 lg:p-6 border-l-4 border-blue-500 ${isDark ? 'bg-gray-800' : 'bg-white'}`}>
       <div className="flex items-center justify-between">
-        <div>
-          <p className={`text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>{title}</p>
-          <p className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>{value}</p>
+        <div className="min-w-0 flex-1">
+          <p className={`text-xs sm:text-sm font-medium truncate ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>{title}</p>
+          <p className={`text-lg sm:text-2xl font-bold truncate ${isDark ? 'text-white' : 'text-gray-900'}`}>{value}</p>
           {trend && (
-            <p className={`text-sm ${trend > 0 ? 'text-green-400' : 'text-red-400'}`}>
+            <p className={`text-xs sm:text-sm ${trend > 0 ? 'text-green-400' : 'text-red-400'}`}>
               {trend > 0 ? '+' : ''}{trend}% from last month
             </p>
           )}
         </div>
-        <div className={`p-3 rounded-full ${isDark ? 'bg-blue-900' : 'bg-blue-100'}`}>
-          <Icon className={`h-6 w-6 ${isDark ? 'text-blue-300' : 'text-blue-600'}`} />
+        <div className={`p-2 sm:p-3 rounded-full flex-shrink-0 ${isDark ? 'bg-blue-900' : 'bg-blue-100'}`}>
+          <Icon className={`h-4 w-4 sm:h-6 sm:w-6 ${isDark ? 'text-blue-300' : 'text-blue-600'}`} />
         </div>
       </div>
     </div>
   );
 
   const UserManagementTab = () => (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h2 className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>User Management</h2>
-        <button className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700 transition-colors">
+    <div className="space-y-4 sm:space-y-6">
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
+        <h2 className={`text-xl sm:text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>User Management</h2>
+        <button className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700 transition-colors w-full sm:w-auto justify-center sm:justify-start">
           <Plus className="h-4 w-4" />
           Add User
         </button>
       </div>
 
-      <div className="flex gap-4 mb-4">
+      <div className="flex flex-col sm:flex-row gap-4 mb-4">
         <div className="flex-1 relative">
           <Search className={`h-4 w-4 absolute left-3 top-1/2 transform -translate-y-1/2 ${isDark ? 'text-gray-400' : 'text-gray-400'}`} />
           <input
@@ -403,7 +661,7 @@ const AdminDashboard = () => {
             }`}
           />
         </div>
-        <button className={`px-4 py-2 border rounded-lg flex items-center gap-2 transition-colors ${
+        <button className={`px-4 py-2 border rounded-lg flex items-center gap-2 transition-colors w-full sm:w-auto justify-center sm:justify-start ${
           isDark 
             ? 'border-gray-600 text-gray-300 hover:bg-gray-700' 
             : 'border-gray-300 text-gray-700 hover:bg-gray-50'
@@ -414,75 +672,82 @@ const AdminDashboard = () => {
       </div>
 
       <div className={`rounded-lg shadow overflow-hidden ${isDark ? 'bg-gray-800' : 'bg-white'}`}>
-        <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-          <thead className={isDark ? 'bg-gray-700' : 'bg-gray-50'}>
-            <tr>
-              <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>User</th>
-              <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>Role</th>
-              <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>Status</th>
-              <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>Join Date</th>
-              <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>Actions</th>
-            </tr>
-          </thead>
-          <tbody className={`divide-y ${isDark ? 'bg-gray-800 divide-gray-700' : 'bg-white divide-gray-200'}`}>
-            {users.map((user) => (
-              <tr key={user.id}>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div>
-                    <div className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>{user.name}</div>
-                    <div className={`text-sm ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>{user.email}</div>
-                  </div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                    user.role === 'admin' ? 'bg-purple-100 text-purple-800' :
-                    user.role === 'vendor' ? 'bg-orange-100 text-orange-800' :
-                    'bg-gray-100 text-gray-800'
-                  }`}>
-                    {user.role}
-                  </span>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                    user.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                  }`}>
-                    {user.status}
-                  </span>
-                </td>
-                <td className={`px-6 py-4 whitespace-nowrap text-sm ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>
-                  {user.joinDate}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                  <div className="flex space-x-2">
-                    <button className="text-blue-600 hover:text-blue-900 transition-colors">
-                      <Eye className="h-4 w-4" />
-                    </button>
-                    <button className="text-green-600 hover:text-green-900 transition-colors">
-                      <Edit className="h-4 w-4" />
-                    </button>
-                    <button className="text-red-600 hover:text-red-900 transition-colors">
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
-                </td>
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+            <thead className={isDark ? 'bg-gray-700' : 'bg-gray-50'}>
+              <tr>
+                <th className={`px-3 sm:px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>User</th>
+                <th className={`px-3 sm:px-6 py-3 text-left text-xs font-medium uppercase tracking-wider hidden sm:table-cell ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>Role</th>
+                <th className={`px-3 sm:px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>Status</th>
+                <th className={`px-3 sm:px-6 py-3 text-left text-xs font-medium uppercase tracking-wider hidden lg:table-cell ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>Join Date</th>
+                <th className={`px-3 sm:px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>Actions</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className={`divide-y ${isDark ? 'bg-gray-800 divide-gray-700' : 'bg-white divide-gray-200'}`}>
+              {users.map((user) => (
+                <tr key={user.id}>
+                  <td className="px-3 sm:px-6 py-4 whitespace-nowrap">
+                    <div>
+                      <div className={`text-sm font-medium truncate max-w-[120px] sm:max-w-none ${isDark ? 'text-white' : 'text-gray-900'}`}>{user.name}</div>
+                      <div className={`text-sm truncate max-w-[120px] sm:max-w-none ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>{user.email}</div>
+                    </div>
+                  </td>
+                  <td className="px-3 sm:px-6 py-4 whitespace-nowrap hidden sm:table-cell">
+                    <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                      user.role === 'admin' ? 'bg-purple-100 text-purple-800' :
+                      user.role === 'vendor' ? 'bg-orange-100 text-orange-800' :
+                      'bg-gray-100 text-gray-800'
+                    }`}>
+                      {user.role}
+                    </span>
+                  </td>
+                  <td className="px-3 sm:px-6 py-4 whitespace-nowrap">
+                    <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                      user.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                    }`}>
+                      {user.status}
+                    </span>
+                  </td>
+                  <td className={`px-3 sm:px-6 py-4 whitespace-nowrap text-sm hidden lg:table-cell ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>
+                    {user.joinDate}
+                  </td>
+                  <td className="px-3 sm:px-6 py-4 whitespace-nowrap text-sm font-medium">
+                    <div className="flex space-x-1 sm:space-x-2">
+                      <button className="text-blue-600 hover:text-blue-900 transition-colors p-1">
+                        <Eye className="h-4 w-4" />
+                      </button>
+                      <button className="text-green-600 hover:text-green-900 transition-colors p-1">
+                        <Edit className="h-4 w-4" />
+                      </button>
+                      <button className="text-red-600 hover:text-red-900 transition-colors p-1">
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
 
   const ProductManagementTab = () => (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h2 className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>Item Management</h2>
-        <div className="flex gap-2">
+    <div className="space-y-4 sm:space-y-6">
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
+        <div>
+          <h2 className={`text-xl sm:text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>Item Management</h2>
+          {!isConnected && (
+            <p className="text-sm text-yellow-600 mt-1">Real-time updates disconnected</p>
+          )}
+        </div>
+        <div className="flex flex-col sm:flex-row gap-2">
           {selectedItems.size > 0 && (
             <div className="relative">
               <button 
                 onClick={() => setBulkActionMenu(!bulkActionMenu)}
-                className="bg-gray-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-gray-700 transition-colors"
+                className="bg-gray-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-gray-700 transition-colors w-full sm:w-auto justify-center"
               >
                 <MoreHorizontal className="h-4 w-4" />
                 Bulk Actions ({selectedItems.size})
@@ -491,20 +756,23 @@ const AdminDashboard = () => {
                 <div className={`absolute right-0 mt-2 w-48 rounded-md shadow-lg z-10 ${isDark ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'} border`}>
                   <div className="py-1">
                     <button 
-                      onClick={() => handleBulkStatusUpdate('active')}
-                      className={`block px-4 py-2 text-sm w-full text-left hover:bg-gray-100 dark:hover:bg-gray-700 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}
+                      onClick={() => handleBulkStatusUpdate(ITEM_STATUS.ACTIVE)}
+                      disabled={pendingOperations.has('bulk-status-update')}
+                      className={`block px-4 py-2 text-sm w-full text-left hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}
                     >
                       Mark as Active
                     </button>
                     <button 
-                      onClick={() => handleBulkStatusUpdate('inactive')}
-                      className={`block px-4 py-2 text-sm w-full text-left hover:bg-gray-100 dark:hover:bg-gray-700 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}
+                      onClick={() => handleBulkStatusUpdate(ITEM_STATUS.INACTIVE)}
+                      disabled={pendingOperations.has('bulk-status-update')}
+                      className={`block px-4 py-2 text-sm w-full text-left hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}
                     >
                       Mark as Inactive
                     </button>
                     <button 
                       onClick={handleBulkDelete}
-                      className="block px-4 py-2 text-sm w-full text-left hover:bg-red-100 dark:hover:bg-red-900 text-red-600"
+                      disabled={pendingOperations.has('bulk-delete')}
+                      className="block px-4 py-2 text-sm w-full text-left hover:bg-red-100 dark:hover:bg-red-900 text-red-600 disabled:opacity-50"
                     >
                       Delete Selected
                     </button>
@@ -515,7 +783,7 @@ const AdminDashboard = () => {
           )}
           <button 
             onClick={() => openItemModal('add')}
-            className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700 transition-colors"
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700 transition-colors w-full sm:w-auto justify-center"
           >
             <Plus className="h-4 w-4" />
             Add Item
@@ -525,212 +793,52 @@ const AdminDashboard = () => {
 
       {/* Success/Error Messages */}
       {success && (
-        <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded">
+        <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded text-sm">
           {success}
         </div>
       )}
       {error && (
-        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded text-sm">
           {error}
         </div>
       )}
 
-      {/* Search and Filters */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="relative">
-          <Search className={`h-4 w-4 absolute left-3 top-1/2 transform -translate-y-1/2 ${isDark ? 'text-gray-400' : 'text-gray-400'}`} />
-          <input
-            type="text"
-            placeholder="Search items..."
-            value={itemSearchTerm}
-            onChange={(e) => setItemSearchTerm(e.target.value)}
-            className={`w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors ${
-              isDark 
-                ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' 
-                : 'bg-white border-gray-300 text-gray-900 placeholder-gray-500'
-            }`}
-          />
-        </div>
-        <select
-          value={itemFilters.category}
-          onChange={(e) => setItemFilters(prev => ({ ...prev, category: e.target.value }))}
-          className={`px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors ${
-            isDark 
-              ? 'bg-gray-700 border-gray-600 text-white' 
-              : 'bg-white border-gray-300 text-gray-900'
-          }`}
-        >
-          <option value="">All Categories</option>
-          {categories.map(category => (
-            <option key={category} value={category}>{category}</option>
-          ))}
-        </select>
-        <select
-          value={itemFilters.status}
-          onChange={(e) => setItemFilters(prev => ({ ...prev, status: e.target.value }))}
-          className={`px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors ${
-            isDark 
-              ? 'bg-gray-700 border-gray-600 text-white' 
-              : 'bg-white border-gray-300 text-gray-900'
-          }`}
-        >
-          <option value="">All Status</option>
-          <option value="active">Active</option>
-          <option value="inactive">Inactive</option>
-          <option value="out_of_stock">Out of Stock</option>
-        </select>
-        <div className="flex gap-2">
-          <input
-            type="number"
-            placeholder="Min Price"
-            value={itemFilters.priceRange.min}
-            onChange={(e) => setItemFilters(prev => ({ 
-              ...prev, 
-              priceRange: { ...prev.priceRange, min: e.target.value } 
-            }))}
-            className={`flex-1 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors ${
-              isDark 
-                ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' 
-                : 'bg-white border-gray-300 text-gray-900 placeholder-gray-500'
-            }`}
-          />
-          <input
-            type="number"
-            placeholder="Max Price"
-            value={itemFilters.priceRange.max}
-            onChange={(e) => setItemFilters(prev => ({ 
-              ...prev, 
-              priceRange: { ...prev.priceRange, max: e.target.value } 
-            }))}
-            className={`flex-1 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors ${
-              isDark 
-                ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' 
-                : 'bg-white border-gray-300 text-gray-900 placeholder-gray-500'
-            }`}
-          />
-        </div>
-      </div>
+      <ItemFilters 
+        searchTerm={itemSearchTerm}
+        onSearchChange={setItemSearchTerm}
+        filters={itemFilters}
+        onFiltersChange={setItemFilters}
+        categories={categories}
+        statusOptions={Object.values(ITEM_STATUS)}
+        isDark={isDark}
+      />
 
-      {/* Items Table */}
-      <div className={`rounded-lg shadow overflow-hidden ${isDark ? 'bg-gray-800' : 'bg-white'}`}>
-        <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-          <thead className={isDark ? 'bg-gray-700' : 'bg-gray-50'}>
-            <tr>
-              <th className="px-6 py-3">
-                <button
-                  onClick={toggleAllItemsSelection}
-                  className={`${isDark ? 'text-gray-300' : 'text-gray-500'} hover:${isDark ? 'text-white' : 'text-gray-700'}`}
-                >
-                  {selectedItems.size === paginatedItems.length && paginatedItems.length > 0 ? 
-                    <CheckSquare className="h-4 w-4" /> : 
-                    <Square className="h-4 w-4" />
-                  }
-                </button>
-              </th>
-              <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>Item</th>
-              <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>SKU</th>
-              <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>Category</th>
-              <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>Price</th>
-              <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>Stock</th>
-              <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>Status</th>
-              <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>Last Updated</th>
-              <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>Actions</th>
-            </tr>
-          </thead>
-          <tbody className={`divide-y ${isDark ? 'bg-gray-800 divide-gray-700' : 'bg-white divide-gray-200'}`}>
-            {paginatedItems.map((item) => (
-              <tr key={item.id} className={selectedItems.has(item.id) ? (isDark ? 'bg-gray-700' : 'bg-blue-50') : ''}>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <button
-                    onClick={() => toggleItemSelection(item.id)}
-                    className={`${isDark ? 'text-gray-300' : 'text-gray-500'} hover:${isDark ? 'text-white' : 'text-gray-700'}`}
-                  >
-                    {selectedItems.has(item.id) ? 
-                      <CheckSquare className="h-4 w-4" /> : 
-                      <Square className="h-4 w-4" />
-                    }
-                  </button>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="flex items-center">
-                    <div className={`h-10 w-10 flex-shrink-0 rounded-lg ${isDark ? 'bg-gray-600' : 'bg-gray-200'} flex items-center justify-center`}>
-                      <ImageIcon className={`h-5 w-5 ${isDark ? 'text-gray-400' : 'text-gray-500'}`} />
-                    </div>
-                    <div className="ml-4">
-                      <div className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>{item.name}</div>
-                      <div className={`text-sm ${isDark ? 'text-gray-300' : 'text-gray-500'} truncate max-w-xs`}>{item.description}</div>
-                    </div>
-                  </div>
-                </td>
-                <td className={`px-6 py-4 whitespace-nowrap text-sm ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>
-                  {item.sku}
-                </td>
-                <td className={`px-6 py-4 whitespace-nowrap text-sm ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>
-                  {item.category}
-                </td>
-                <td className={`px-6 py-4 whitespace-nowrap text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  ${item.price.toFixed(2)}
-                </td>
-                <td className={`px-6 py-4 whitespace-nowrap text-sm ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  <span className={item.stock === 0 ? 'text-red-500 font-medium' : ''}>{item.stock}</span>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                    item.status === 'active' ? 'bg-green-100 text-green-800' : 
-                    item.status === 'out_of_stock' ? 'bg-red-100 text-red-800' :
-                    'bg-gray-100 text-gray-800'
-                  }`}>
-                    {item.status.replace('_', ' ')}
-                  </span>
-                </td>
-                <td className={`px-6 py-4 whitespace-nowrap text-sm ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>
-                  {item.updatedAt}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                  <div className="flex space-x-2">
-                    <button 
-                      onClick={() => openItemModal('view', item)}
-                      className="text-blue-600 hover:text-blue-900 transition-colors"
-                      title="View"
-                    >
-                      <Eye className="h-4 w-4" />
-                    </button>
-                    <button 
-                      onClick={() => openItemModal('edit', item)}
-                      className="text-green-600 hover:text-green-900 transition-colors"
-                      title="Edit"
-                    >
-                      <Edit className="h-4 w-4" />
-                    </button>
-                    <button 
-                      onClick={() => {
-                        setItemToDelete(item);
-                        setShowDeleteConfirm(true);
-                      }}
-                      className="text-red-600 hover:text-red-900 transition-colors"
-                      title="Delete"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <ItemTable 
+        items={paginatedItems}
+        selectedItems={selectedItems}
+        onItemSelect={toggleItemSelection}
+        onSelectAll={toggleAllItemsSelection}
+        onView={(item) => openItemModal('view', item)}
+        onEdit={(item) => openItemModal('edit', item)}
+        onDelete={(item) => {
+          setItemToDelete(item);
+          setShowDeleteConfirm(true);
+        }}
+        pendingOperations={pendingOperations}
+        isDark={isDark}
+      />
 
       {/* Pagination */}
       {totalPages > 1 && (
-        <div className="flex items-center justify-between">
-          <div className={`text-sm ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className={`text-sm text-center sm:text-left ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
             Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, filteredItems.length)} of {filteredItems.length} results
           </div>
-          <div className="flex space-x-2">
+          <div className="flex space-x-1 sm:space-x-2 overflow-x-auto pb-2 sm:pb-0">
             <button
               onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
               disabled={currentPage === 1}
-              className={`px-3 py-2 border rounded-lg transition-colors ${
+              className={`px-2 sm:px-3 py-2 border rounded-lg transition-colors text-sm whitespace-nowrap ${
                 currentPage === 1
                   ? 'opacity-50 cursor-not-allowed'
                   : 'hover:bg-gray-50 dark:hover:bg-gray-700'
@@ -738,23 +846,29 @@ const AdminDashboard = () => {
             >
               Previous
             </button>
-            {[...Array(totalPages)].map((_, i) => (
-              <button
-                key={i}
-                onClick={() => setCurrentPage(i + 1)}
-                className={`px-3 py-2 border rounded-lg transition-colors ${
-                  currentPage === i + 1
-                    ? 'bg-blue-600 text-white border-blue-600'
-                    : `hover:bg-gray-50 dark:hover:bg-gray-700 ${isDark ? 'border-gray-600 text-gray-300' : 'border-gray-300 text-gray-700'}`
-                }`}
-              >
-                {i + 1}
-              </button>
-            ))}
+            {[...Array(Math.min(totalPages, 5))].map((_, i) => {
+              const pageNum = currentPage <= 3 ? i + 1 : 
+                            currentPage >= totalPages - 2 ? totalPages - 4 + i : 
+                            currentPage - 2 + i;
+              if (pageNum > totalPages || pageNum < 1) return null;
+              return (
+                <button
+                  key={pageNum}
+                  onClick={() => setCurrentPage(pageNum)}
+                  className={`px-2 sm:px-3 py-2 border rounded-lg transition-colors text-sm ${
+                    currentPage === pageNum
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : `hover:bg-gray-50 dark:hover:bg-gray-700 ${isDark ? 'border-gray-600 text-gray-300' : 'border-gray-300 text-gray-700'}`
+                  }`}
+                >
+                  {pageNum}
+                </button>
+              );
+            })}
             <button
               onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
               disabled={currentPage === totalPages}
-              className={`px-3 py-2 border rounded-lg transition-colors ${
+              className={`px-2 sm:px-3 py-2 border rounded-lg transition-colors text-sm whitespace-nowrap ${
                 currentPage === totalPages
                   ? 'opacity-50 cursor-not-allowed'
                   : 'hover:bg-gray-50 dark:hover:bg-gray-700'
@@ -769,10 +883,10 @@ const AdminDashboard = () => {
   );
 
   const AnalyticsTab = () => (
-    <div className="space-y-6">
-      <h2 className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>Analytics & Reports</h2>
+    <div className="space-y-4 sm:space-y-6">
+      <h2 className={`text-xl sm:text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>Analytics & Reports</h2>
       
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 sm:gap-6">
         <StatCard
           title="Total Users"
           value={analytics.totalUsers?.toLocaleString()}
@@ -803,29 +917,29 @@ const AdminDashboard = () => {
         />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className={`rounded-lg shadow p-6 ${isDark ? 'bg-gray-800' : 'bg-white'}`}>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
+        <div className={`rounded-lg shadow p-4 sm:p-6 ${isDark ? 'bg-gray-800' : 'bg-white'}`}>
           <h3 className={`text-lg font-semibold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>Top Selling Products</h3>
           <div className="space-y-3">
             {analytics.topSellingProducts?.map((product, index) => (
               <div key={index} className="flex justify-between items-center">
-                <span className={`text-sm ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>{product.name}</span>
-                <span className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>{product.sales} sales</span>
+                <span className={`text-sm truncate mr-2 ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>{product.name}</span>
+                <span className={`text-sm font-medium whitespace-nowrap ${isDark ? 'text-white' : 'text-gray-900'}`}>{product.sales} sales</span>
               </div>
             ))}
           </div>
         </div>
 
-        <div className={`rounded-lg shadow p-6 ${isDark ? 'bg-gray-800' : 'bg-white'}`}>
+        <div className={`rounded-lg shadow p-4 sm:p-6 ${isDark ? 'bg-gray-800' : 'bg-white'}`}>
           <h3 className={`text-lg font-semibold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>Recent Orders</h3>
           <div className="space-y-3">
             {orders.slice(0, 5).map((order) => (
               <div key={order.id} className="flex justify-between items-center">
-                <div>
-                  <p className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>#{order.id} - {order.customer}</p>
+                <div className="min-w-0 flex-1 mr-2">
+                  <p className={`text-sm font-medium truncate ${isDark ? 'text-white' : 'text-gray-900'}`}>#{order.id} - {order.customer}</p>
                   <p className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>{order.date}</p>
                 </div>
-                <div className="text-right">
+                <div className="text-right flex-shrink-0">
                   <p className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>${order.total}</p>
                   <span className={`text-xs px-2 py-1 rounded-full ${
                     order.status === 'completed' ? 'bg-green-100 text-green-800' :
@@ -842,13 +956,13 @@ const AdminDashboard = () => {
       </div>
 
       {/* Audit Log */}
-      <div className={`rounded-lg shadow p-6 ${isDark ? 'bg-gray-800' : 'bg-white'}`}>
+      <div className={`rounded-lg shadow p-4 sm:p-6 ${isDark ? 'bg-gray-800' : 'bg-white'}`}>
         <h3 className={`text-lg font-semibold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>Audit Trail</h3>
         <div className="space-y-2">
           {auditLog.slice(0, 10).map((log) => (
-            <div key={log.id} className={`flex justify-between items-center py-2 border-b ${isDark ? 'border-gray-700' : 'border-gray-200'}`}>
-              <div className="flex items-center space-x-3">
-                <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+            <div key={log.id} className={`flex flex-col sm:flex-row sm:justify-between sm:items-center py-2 border-b gap-2 ${isDark ? 'border-gray-700' : 'border-gray-200'}`}>
+              <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full flex-shrink-0 ${
                   log.action === 'Created' ? 'bg-green-100 text-green-800' :
                   log.action === 'Updated' ? 'bg-blue-100 text-blue-800' :
                   log.action === 'Deleted' ? 'bg-red-100 text-red-800' :
@@ -856,10 +970,10 @@ const AdminDashboard = () => {
                 }`}>
                   {log.action}
                 </span>
-                <span className={`text-sm ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>{log.item}</span>
+                <span className={`text-sm truncate ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>{log.item}</span>
                 <span className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>by {log.user}</span>
               </div>
-              <span className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>{log.timestamp}</span>
+              <span className={`text-xs whitespace-nowrap ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>{log.timestamp}</span>
             </div>
           ))}
         </div>
@@ -867,208 +981,25 @@ const AdminDashboard = () => {
     </div>
   );
 
-  // Item Modal Component
-  const ItemModal = () => (
-    showItemModal && (
-      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-        <div className={`${isDark ? 'bg-gray-800' : 'bg-white'} rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-screen overflow-y-auto`}>
-          <div className="flex justify-between items-center p-6 border-b border-gray-200 dark:border-gray-700">
-            <h3 className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-              {modalMode === 'add' ? 'Add New Item' : 
-               modalMode === 'edit' ? 'Edit Item' : 'View Item'}
-            </h3>
-            <button
-              onClick={() => setShowItemModal(false)}
-              className={`${isDark ? 'text-gray-400 hover:text-gray-200' : 'text-gray-500 hover:text-gray-700'}`}
-            >
-              <X className="h-6 w-6" />
-            </button>
-          </div>
-          
-          <form onSubmit={handleItemSubmit} className="p-6 space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
-                  Name *
-                </label>
-                <input
-                  type="text"
-                  value={itemForm.name}
-                  onChange={(e) => setItemForm(prev => ({ ...prev, name: e.target.value }))}
-                  disabled={modalMode === 'view'}
-                  required
-                  className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors ${
-                    isDark 
-                      ? 'bg-gray-700 border-gray-600 text-white' 
-                      : 'bg-white border-gray-300 text-gray-900'
-                  } ${modalMode === 'view' ? 'opacity-60' : ''}`}
-                />
-              </div>
-              
-              <div>
-                <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
-                  SKU *
-                </label>
-                <input
-                  type="text"
-                  value={itemForm.sku}
-                  onChange={(e) => setItemForm(prev => ({ ...prev, sku: e.target.value }))}
-                  disabled={modalMode === 'view'}
-                  required
-                  className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors ${
-                    isDark 
-                      ? 'bg-gray-700 border-gray-600 text-white' 
-                      : 'bg-white border-gray-300 text-gray-900'
-                  } ${modalMode === 'view' ? 'opacity-60' : ''}`}
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
-                Description
-              </label>
-              <textarea
-                value={itemForm.description}
-                onChange={(e) => setItemForm(prev => ({ ...prev, description: e.target.value }))}
-                disabled={modalMode === 'view'}
-                rows={3}
-                className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors ${
-                  isDark 
-                    ? 'bg-gray-700 border-gray-600 text-white' 
-                    : 'bg-white border-gray-300 text-gray-900'
-                } ${modalMode === 'view' ? 'opacity-60' : ''}`}
-              />
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
-                  Category *
-                </label>
-                <select
-                  value={itemForm.category}
-                  onChange={(e) => setItemForm(prev => ({ ...prev, category: e.target.value }))}
-                  disabled={modalMode === 'view'}
-                  required
-                  className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors ${
-                    isDark 
-                      ? 'bg-gray-700 border-gray-600 text-white' 
-                      : 'bg-white border-gray-300 text-gray-900'
-                  } ${modalMode === 'view' ? 'opacity-60' : ''}`}
-                >
-                  <option value="">Select Category</option>
-                  {categories.map(category => (
-                    <option key={category} value={category}>{category}</option>
-                  ))}
-                </select>
-              </div>
-              
-              <div>
-                <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
-                  Price *
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={itemForm.price}
-                  onChange={(e) => setItemForm(prev => ({ ...prev, price: e.target.value }))}
-                  disabled={modalMode === 'view'}
-                  required
-                  className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors ${
-                    isDark 
-                      ? 'bg-gray-700 border-gray-600 text-white' 
-                      : 'bg-white border-gray-300 text-gray-900'
-                  } ${modalMode === 'view' ? 'opacity-60' : ''}`}
-                />
-              </div>
-              
-              <div>
-                <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
-                  Stock *
-                </label>
-                <input
-                  type="number"
-                  value={itemForm.stock}
-                  onChange={(e) => setItemForm(prev => ({ ...prev, stock: e.target.value }))}
-                  disabled={modalMode === 'view'}
-                  required
-                  className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors ${
-                    isDark 
-                      ? 'bg-gray-700 border-gray-600 text-white' 
-                      : 'bg-white border-gray-300 text-gray-900'
-                  } ${modalMode === 'view' ? 'opacity-60' : ''}`}
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
-                Status
-              </label>
-              <select
-                value={itemForm.status}
-                onChange={(e) => setItemForm(prev => ({ ...prev, status: e.target.value }))}
-                disabled={modalMode === 'view'}
-                className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors ${
-                  isDark 
-                    ? 'bg-gray-700 border-gray-600 text-white' 
-                    : 'bg-white border-gray-300 text-gray-900'
-                } ${modalMode === 'view' ? 'opacity-60' : ''}`}
-              >
-                <option value="active">Active</option>
-                <option value="inactive">Inactive</option>
-                <option value="out_of_stock">Out of Stock</option>
-              </select>
-            </div>
-
-            {modalMode !== 'view' && (
-              <div className="flex justify-end gap-3 pt-4">
-                <button
-                  type="button"
-                  onClick={() => setShowItemModal(false)}
-                  className={`px-4 py-2 border rounded-lg transition-colors ${
-                    isDark 
-                      ? 'border-gray-600 text-gray-300 hover:bg-gray-700' 
-                      : 'border-gray-300 text-gray-700 hover:bg-gray-50'
-                  }`}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2"
-                >
-                  <Save className="h-4 w-4" />
-                  {modalMode === 'add' ? 'Create Item' : 'Update Item'}
-                </button>
-              </div>
-            )}
-          </form>
-        </div>
-      </div>
-    )
-  );
-
   // Delete Confirmation Modal
   const DeleteConfirmModal = () => (
     showDeleteConfirm && (
-      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-        <div className={`${isDark ? 'bg-gray-800' : 'bg-white'} rounded-lg shadow-xl max-w-md w-full mx-4`}>
-          <div className="p-6">
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+        <div className={`${isDark ? 'bg-gray-800' : 'bg-white'} rounded-lg shadow-xl max-w-md w-full`}>
+          <div className="p-4 sm:p-6">
             <div className="flex items-center mb-4">
-              <AlertCircle className="h-6 w-6 text-red-600 mr-3" />
+              <AlertCircle className="h-6 w-6 text-red-600 mr-3 flex-shrink-0" />
               <h3 className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
                 Delete Item
               </h3>
             </div>
-            <p className={`mb-6 ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>
+            <p className={`mb-6 text-sm sm:text-base ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>
               Are you sure you want to delete "{itemToDelete?.name}"? This action cannot be undone.
             </p>
-            <div className="flex justify-end gap-3">
+            <div className="flex flex-col sm:flex-row justify-end gap-3">
               <button
                 onClick={() => setShowDeleteConfirm(false)}
-                className={`px-4 py-2 border rounded-lg transition-colors ${
+                className={`px-4 py-2 border rounded-lg transition-colors w-full sm:w-auto ${
                   isDark 
                     ? 'border-gray-600 text-gray-300 hover:bg-gray-700' 
                     : 'border-gray-300 text-gray-700 hover:bg-gray-50'
@@ -1078,9 +1009,10 @@ const AdminDashboard = () => {
               </button>
               <button
                 onClick={handleDeleteItem}
-                className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors"
+                disabled={pendingOperations.has(`delete-${itemToDelete?.id}`)}
+                className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 w-full sm:w-auto"
               >
-                Delete
+                {pendingOperations.has(`delete-${itemToDelete?.id}`) ? 'Deleting...' : 'Delete'}
               </button>
             </div>
           </div>
@@ -1092,22 +1024,22 @@ const AdminDashboard = () => {
   if (loading) {
     return (
       <div className={`min-h-screen flex items-center justify-center ${isDark ? 'bg-gray-900' : 'bg-gray-50'}`}>
-        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600"></div>
+        <div className="animate-spin rounded-full h-16 sm:h-32 w-16 sm:w-32 border-b-2 border-blue-600"></div>
       </div>
     );
   }
 
   return (
     <div className={`min-h-screen ${isDark ? 'bg-gray-900' : 'bg-gray-50'}`}>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="mb-8">
-          <h1 className={`text-3xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>Admin Dashboard</h1>
-          <p className={`mt-2 ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>Manage your eCommerce platform</p>
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-8">
+        <div className="mb-6 sm:mb-8">
+          <h1 className={`text-2xl sm:text-3xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>Admin Dashboard</h1>
+          <p className={`mt-2 text-sm sm:text-base ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>Manage your eCommerce platform</p>
         </div>
 
         {/* Navigation Tabs */}
-        <div className="mb-8">
-          <nav className="flex space-x-8">
+        <div className="mb-6 sm:mb-8">
+          <nav className="flex space-x-4 sm:space-x-8 overflow-x-auto pb-2 sm:pb-0">
             {[
               { id: 'overview', name: 'Overview', icon: TrendingUp },
               { id: 'users', name: 'Users', icon: Users },
@@ -1117,7 +1049,7 @@ const AdminDashboard = () => {
               <button
                 key={id}
                 onClick={() => setActiveTab(id)}
-                className={`flex items-center gap-2 py-2 px-4 border-b-2 font-medium text-sm transition-colors ${
+                className={`flex items-center gap-2 py-2 px-3 sm:px-4 border-b-2 font-medium text-sm transition-colors whitespace-nowrap ${
                   activeTab === id
                     ? 'border-blue-500 text-blue-600'
                     : `border-transparent ${isDark ? 'text-gray-400 hover:text-gray-200 hover:border-gray-600' : 'text-gray-500 hover:text-gray-700 hover:border-gray-300'}`
@@ -1132,7 +1064,7 @@ const AdminDashboard = () => {
 
         {/* Tab Content */}
         <div className={`rounded-lg shadow-sm ${isDark ? 'bg-gray-800' : 'bg-white'}`}>
-          <div className="p-6">
+          <div className="p-4 sm:p-6">
             {activeTab === 'overview' && <AnalyticsTab />}
             {activeTab === 'users' && <UserManagementTab />}
             {activeTab === 'products' && <ProductManagementTab />}
@@ -1142,7 +1074,21 @@ const AdminDashboard = () => {
       </div>
 
       {/* Modals */}
-      <ItemModal />
+      <ItemModal 
+        isOpen={showItemModal}
+        onClose={() => setShowItemModal(false)}
+        mode={modalMode}
+        item={currentItem}
+        formData={itemForm}
+        onFormChange={setItemForm}
+        onSubmit={handleItemSubmit}
+        onFileUpload={handleFileUpload}
+        categories={categories}
+        statusOptions={Object.values(ITEM_STATUS)}
+        errors={formErrors}
+        isDark={isDark}
+        isLoading={pendingOperations.size > 0}
+      />
       <DeleteConfirmModal />
     </div>
   );
