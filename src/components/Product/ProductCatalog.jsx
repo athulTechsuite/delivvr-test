@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useCart } from '../../contexts/CartContext';
+import { useTheme } from '../../contexts/ThemeContext';
 import './ProductCatalog.css';
 
 const ProductCatalog = () => {
   const { user } = useAuth();
   const { addToCart } = useCart();
+  const { theme } = useTheme();
   const [products, setProducts] = useState([]);
   const [filteredProducts, setFilteredProducts] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -109,7 +111,7 @@ const ProductCatalog = () => {
   };
 
   const ProductCard = ({ product }) => (
-    <div className="product-card">
+    <div className={`product-card ${theme}`}>
       <div className="product-image-container">
         <img 
           src={product.image || '/images/placeholder-product.jpg'} 
@@ -146,14 +148,14 @@ const ProductCatalog = () => {
 
         <div className="product-actions">
           <button 
-            className="btn-add-cart"
+            className={`btn-add-cart ${theme}`}
             onClick={() => handleAddToCart(product)}
             disabled={product.stock === 0}
           >
             {product.stock === 0 ? 'Out of Stock' : 'Add to Cart'}
           </button>
           {user && (
-            <button className="btn-wishlist">
+            <button className={`btn-wishlist ${theme}`}>
               ♡
             </button>
           )}
@@ -168,7 +170,7 @@ const ProductCatalog = () => {
 
   if (loading) {
     return (
-      <div className="catalog-loading">
+      <div className={`catalog-loading ${theme}`}>
         <div className="loading-spinner"></div>
         <p>Loading products...</p>
       </div>
@@ -177,10 +179,10 @@ const ProductCatalog = () => {
 
   if (error) {
     return (
-      <div className="catalog-error">
+      <div className={`catalog-error ${theme}`}>
         <h3>Error Loading Products</h3>
         <p>{error}</p>
-        <button onClick={fetchProducts} className="btn-retry">
+        <button onClick={fetchProducts} className={`btn-retry ${theme}`}>
           Try Again
         </button>
       </div>
@@ -188,7 +190,7 @@ const ProductCatalog = () => {
   }
 
   return (
-    <div className="product-catalog">
+    <div className={`product-catalog ${theme}`}>
       <div className="catalog-header">
         <h2>Product Catalog</h2>
         <p>Discover our amazing products</p>
@@ -204,7 +206,7 @@ const ProductCatalog = () => {
               placeholder="Search products..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="search-input"
+              className={`search-input ${theme}`}
             />
           </div>
 
@@ -214,7 +216,7 @@ const ProductCatalog = () => {
               id="category"
               value={selectedCategory}
               onChange={(e) => setSelectedCategory(e.target.value)}
-              className="filter-select"
+              className={`filter-select ${theme}`}
             >
               <option value="all">All Categories</option>
               {categories.map(category => (
@@ -231,7 +233,7 @@ const ProductCatalog = () => {
               id="sort"
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value)}
-              className="filter-select"
+              className={`filter-select ${theme}`}
             >
               <option value="name">Name</option>
               <option value="price-low">Price: Low to High</option>
@@ -248,7 +250,7 @@ const ProductCatalog = () => {
                 placeholder="Min"
                 value={priceRange.min}
                 onChange={(e) => handlePriceRangeChange('min', e.target.value)}
-                className="price-input"
+                className={`price-input ${theme}`}
               />
               <span>to</span>
               <input
@@ -256,7 +258,7 @@ const ProductCatalog = () => {
                 placeholder="Max"
                 value={priceRange.max}
                 onChange={(e) => handlePriceRangeChange('max', e.target.value)}
-                className="price-input"
+                className={`price-input ${theme}`}
               />
             </div>
           </div>
@@ -268,7 +270,7 @@ const ProductCatalog = () => {
       </div>
 
       {filteredProducts.length === 0 ? (
-        <div className="no-products">
+        <div className={`no-products ${theme}`}>
           <h3>No Products Found</h3>
           <p>Try adjusting your filters or search terms.</p>
         </div>
