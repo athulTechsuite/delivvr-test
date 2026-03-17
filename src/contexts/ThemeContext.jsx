@@ -24,10 +24,16 @@ export const ThemeProvider = ({ children }) => {
 
   // Initialize theme from localStorage or system preference
   useEffect(() => {
-    const savedTheme = localStorage.getItem('theme');
-    if (savedTheme && ['light', 'dark', 'system'].includes(savedTheme)) {
-      setTheme(savedTheme);
-    } else {
+    try {
+      const savedTheme = localStorage.getItem('theme');
+      if (savedTheme && ['light', 'dark', 'system'].includes(savedTheme)) {
+        setTheme(savedTheme);
+      } else {
+        setTheme('system');
+      }
+    } catch (error) {
+      // localStorage may not be available in private/incognito mode
+      console.warn('localStorage not available:', error);
       setTheme('system');
     }
   }, []);
@@ -105,7 +111,12 @@ export const ThemeProvider = ({ children }) => {
 
   const setThemeAndPersist = (newTheme) => {
     setTheme(newTheme);
-    localStorage.setItem('theme', newTheme);
+    try {
+      localStorage.setItem('theme', newTheme);
+    } catch (error) {
+      // localStorage may not be available in private/incognito mode
+      console.warn('Failed to persist theme to localStorage:', error);
+    }
   };
 
   const toggleTheme = () => {
