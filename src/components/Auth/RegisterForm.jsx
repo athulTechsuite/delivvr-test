@@ -1,10 +1,10 @@
-import React, { useState, useContext } from 'react';
+import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ThemeContext } from '../../context/ThemeContext';
+import { useTheme } from '../../contexts/ThemeContext';
 import './RegisterForm.css';
 
 const RegisterForm = ({ onRegister }) => {
-  const { theme } = useContext(ThemeContext);
+  const { theme } = useTheme();
   
   const [formData, setFormData] = useState({
     firstName: '',
