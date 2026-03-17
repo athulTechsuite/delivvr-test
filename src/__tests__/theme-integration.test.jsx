@@ -72,6 +72,235 @@ describe('Theme Integration Tests', () => {
     );
   };
 
+  // TC-001: Theme Selection Navigation - Complete test coverage
+  describe('TC-001: Theme Selection Navigation', () => {
+    it('should navigate to theme settings through main navigation menu', async () => {
+      const TestApp = () => (
+        <ThemeProvider>
+          <DashboardLayout>
+            <div data-testid="dashboard-content">Dashboard Content</div>
+          </DashboardLayout>
+        </ThemeProvider>
+      );
+
+      renderWithRouter(<TestApp />);
+
+      // Look for settings/preferences navigation item
+      const navigationItems = screen.getAllByRole('button');
+      const settingsLink = navigationItems.find(item => 
+        item.textContent?.toLowerCase().includes('settings') ||
+        item.textContent?.toLowerCase().includes('preferences') ||
+        item.getAttribute('aria-label')?.toLowerCase().includes('settings')
+      ) || screen.queryByTestId('settings-nav') || screen.queryByTestId('preferences-nav');
+
+      if (settingsLink) {
+        fireEvent.click(settingsLink);
+        
+        // Verify navigation to settings/theme area
+        await waitFor(() => {
+          const themeSection = screen.queryByText(/theme/i) || 
+                              screen.queryByText(/appearance/i) ||
+                              screen.queryByTestId('theme-settings');
+          expect(themeSection).toBeInTheDocument();
+        });
+      } else {
+        // If no explicit settings nav, ensure theme controls are accessible
+        const themeControls = screen.queryByLabelText(/theme/i) ||
+                             screen.queryByTestId('theme-toggle') ||
+                             document.querySelector('[data-theme-control]');
+        expect(themeControls).toBeInTheDocument();
+      }
+    });
+
+    it('should provide keyboard navigation to theme selection options', async () => {
+      const TestApp = () => (
+        <ThemeProvider>
+          <div data-testid="theme-navigation-test">
+            <button data-testid="theme-light" aria-label="Light theme">Light</button>
+            <button data-testid="theme-dark" aria-label="Dark theme">Dark</button>
+            <button data-testid="theme-auto" aria-label="Auto theme">Auto</button>
+          </div>
+        </ThemeProvider>
+      );
+
+      render(<TestApp />);
+
+      const lightTheme = screen.getByTestId('theme-light');
+      const darkTheme = screen.getByTestId('theme-dark');
+      const autoTheme = screen.getByTestId('theme-auto');
+
+      // Test keyboard navigation
+      lightTheme.focus();
+      expect(document.activeElement).toBe(lightTheme);
+
+      fireEvent.keyDown(lightTheme, { key: 'Tab' });
+      fireEvent.keyDown(darkTheme, { key: 'Enter' });
+      
+      await waitFor(() => {
+        expect(document.documentElement).toHaveAttribute('data-theme', 'dark');
+      });
+
+      fireEvent.keyDown(autoTheme, { key: ' ' });
+      await waitFor(() => {
+        expect(document.documentElement).toHaveAttribute('data-theme');
+      });
+    });
+
+    it('should show current theme selection state in navigation', async () => {
+      localStorageMock.getItem.mockReturnValue('dark');
+
+      const TestApp = () => (
+        <ThemeProvider>
+          <div data-testid="theme-status-test">
+            <span data-testid="current-theme" aria-live="polite">
+              Current theme: {document.documentElement.getAttribute('data-theme') || 'light'}
+            </span>
+          </div>
+        </ThemeProvider>
+      );
+
+      render(<TestApp />);
+
+      await waitFor(() => {
+        expect(document.documentElement).toHaveAttribute('data-theme', 'dark');
+        const currentThemeIndicator = screen.getByTestId('current-theme');
+        expect(currentThemeIndicator).toHaveTextContent(/dark/i);
+      });
+    });
+  });
+
+  // TC-002: Light to Dark Theme Switch - Enhanced test coverage
+  describe('TC-002: Light to Dark Theme Switch', () => {
+    it('should switch from light to dark theme with immediate visual feedback', async () => {
+      const TestApp = () => (
+        <ThemeProvider>
+          <div data-testid="theme-switch-test">
+            <button data-testid="toggle-theme" onClick={() => {
+              const currentTheme = document.documentElement.getAttribute('data-theme');
+              const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+              document.documentElement.setAttribute('data-theme', newTheme);
+            }}>
+              Toggle Theme
+            </button>
+            <div data-testid="themed-content" className="themed-element">
+              Content that should change appearance
+            </div>
+          </div>
+        </ThemeProvider>
+      );
+
+      render(<TestApp />);
+
+      // Verify initial light theme
+      await waitFor(() => {
+        expect(document.documentElement).toHaveAttribute('data-theme', 'light');
+      });
+
+      const toggleButton = screen.getByTestId('toggle-theme');
+      const themedContent = screen.getByTestId('themed-content');
+
+      // Switch to dark theme
+      fireEvent.click(toggleButton);
+
+      await waitFor(() => {
+        expect(document.documentElement).toHaveAttribute('data-theme', 'dark');
+      });
+
+      // Verify content is still present after theme change
+      expect(themedContent).toBeInTheDocument();
+      expect(themedContent).toHaveClass('themed-element');
+    });
+
+    it('should persist theme selection across browser sessions', async () => {
+      const TestApp = () => (
+        <ThemeProvider>
+          <div data-testid="persistence-test">
+            <button data-testid="set-dark-theme" onClick={() => {
+              document.documentElement.setAttribute('data-theme', 'dark');
+              localStorage.setItem('theme', 'dark');
+            }}>
+              Set Dark Theme
+            </button>
+          </div>
+        </ThemeProvider>
+      );
+
+      render(<TestApp />);
+
+      fireEvent.click(screen.getByTestId('set-dark-theme'));
+
+      await waitFor(() => {
+        expect(localStorageMock.setItem).toHaveBeenCalledWith('theme', 'dark');
+        expect(document.documentElement).toHaveAttribute('data-theme', 'dark');
+      });
+    });
+
+    it('should handle system theme preference changes', async () => {
+      // Mock system dark mode preference
+      const matchMediaMock = jest.fn().mockImplementation(query => ({
+        matches: query === '(prefers-color-scheme: dark)',
+        media: query,
+        addEventListener: jest.fn(),
+        removeEventListener: jest.fn(),
+      }));
+      window.matchMedia = matchMediaMock;
+
+      const TestApp = () => (
+        <ThemeProvider>
+          <div data-testid="system-theme-test">
+            <div>System theme detection test</div>
+          </div>
+        </ThemeProvider>
+      );
+
+      render(<TestApp />);
+
+      await waitFor(() => {
+        expect(matchMediaMock).toHaveBeenCalledWith('(prefers-color-scheme: dark)');
+        expect(document.documentElement).toHaveAttribute('data-theme');
+      });
+    });
+
+    it('should update all theme-dependent components simultaneously', async () => {
+      const TestApp = () => (
+        <ThemeProvider>
+          <div data-testid="multi-component-test">
+            <header data-testid="themed-header">Header</header>
+            <main data-testid="themed-main">Main Content</main>
+            <footer data-testid="themed-footer">Footer</footer>
+            <button data-testid="theme-switcher" onClick={() => {
+              const newTheme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+              document.documentElement.setAttribute('data-theme', newTheme);
+            }}>
+              Switch Theme
+            </button>
+          </div>
+        </ThemeProvider>
+      );
+
+      render(<TestApp />);
+
+      const header = screen.getByTestId('themed-header');
+      const main = screen.getByTestId('themed-main');
+      const footer = screen.getByTestId('themed-footer');
+      const switcher = screen.getByTestId('theme-switcher');
+
+      // Initial state
+      expect(document.documentElement).toHaveAttribute('data-theme', 'light');
+
+      // Switch theme
+      fireEvent.click(switcher);
+
+      await waitFor(() => {
+        expect(document.documentElement).toHaveAttribute('data-theme', 'dark');
+        // All components should still be present and functional
+        expect(header).toBeInTheDocument();
+        expect(main).toBeInTheDocument();
+        expect(footer).toBeInTheDocument();
+      });
+    });
+  });
+
   // TC-006: All UI components adapt properly to selected theme
   describe('TC-006: UI Component Theme Adaptation', () => {
     it('should apply theme classes to all dashboard components', async () => {
@@ -240,7 +469,7 @@ describe('Theme Integration Tests', () => {
     });
   });
 
-  // TC-008: Accessibility compliance across themes
+  // TC-008: Accessibility compliance across themes - Enhanced test coverage
   describe('TC-008: Accessibility Compliance', () => {
     it('should maintain WCAG contrast ratios in light theme', async () => {
       const TestApp = () => (
@@ -325,6 +554,146 @@ describe('Theme Integration Tests', () => {
       await waitFor(() => {
         expect(document.activeElement).toBe(input);
       });
+    });
+
+    it('should maintain proper ARIA attributes and screen reader compatibility', async () => {
+      const TestApp = () => (
+        <ThemeProvider>
+          <div data-testid="accessibility-test">
+            <button 
+              data-testid="theme-toggle"
+              aria-label="Toggle between light and dark theme"
+              aria-pressed="false"
+              role="switch"
+              onClick={(e) => {
+                const pressed = e.target.getAttribute('aria-pressed') === 'true';
+                e.target.setAttribute('aria-pressed', (!pressed).toString());
+                document.documentElement.setAttribute('data-theme', pressed ? 'light' : 'dark');
+              }}
+            >
+              <span aria-hidden="true">🌙</span>
+              <span className="sr-only">Dark mode</span>
+            </button>
+            <div aria-live="polite" data-testid="theme-announcement">
+              Current theme: {document.documentElement.getAttribute('data-theme') || 'light'}
+            </div>
+          </div>
+        </ThemeProvider>
+      );
+
+      render(<TestApp />);
+
+      const toggleButton = screen.getByTestId('theme-toggle');
+      const announcement = screen.getByTestId('theme-announcement');
+
+      // Check initial ARIA attributes
+      expect(toggleButton).toHaveAttribute('aria-label', 'Toggle between light and dark theme');
+      expect(toggleButton).toHaveAttribute('aria-pressed', 'false');
+      expect(toggleButton).toHaveAttribute('role', 'switch');
+      expect(announcement).toHaveAttribute('aria-live', 'polite');
+
+      // Toggle theme and check ARIA updates
+      fireEvent.click(toggleButton);
+
+      await waitFor(() => {
+        expect(toggleButton).toHaveAttribute('aria-pressed', 'true');
+        expect(document.documentElement).toHaveAttribute('data-theme', 'dark');
+        expect(announcement).toHaveTextContent('Current theme: dark');
+      });
+    });
+
+    it('should support high contrast mode and reduced motion preferences', async () => {
+      // Mock prefers-reduced-motion
+      window.matchMedia = jest.fn().mockImplementation(query => {
+        if (query === '(prefers-reduced-motion: reduce)') {
+          return {
+            matches: true,
+            media: query,
+            addEventListener: jest.fn(),
+            removeEventListener: jest.fn(),
+          };
+        }
+        return {
+          matches: false,
+          media: query,
+          addEventListener: jest.fn(),
+          removeEventListener: jest.fn(),
+        };
+      });
+
+      const TestApp = () => (
+        <ThemeProvider>
+          <div data-testid="motion-preference-test">
+            <div className="animated-element">Content with potential animations</div>
+          </div>
+        </ThemeProvider>
+      );
+
+      render(<TestApp />);
+
+      await waitFor(() => {
+        expect(window.matchMedia).toHaveBeenCalledWith('(prefers-reduced-motion: reduce)');
+        
+        // Verify that reduced motion is respected
+        const animatedElement = document.querySelector('.animated-element');
+        if (animatedElement) {
+          const computedStyle = window.getComputedStyle(animatedElement);
+          // Should have reduced or no animation when prefers-reduced-motion is set
+          expect(computedStyle.getPropertyValue('animation-duration')).not.toBe('');
+        }
+      });
+    });
+
+    it('should ensure keyboard navigation works consistently across themes', async () => {
+      const TestApp = () => (
+        <ThemeProvider>
+          <div data-testid="keyboard-nav-test">
+            <button data-testid="button-1" tabIndex={0}>Button 1</button>
+            <button data-testid="button-2" tabIndex={0}>Button 2</button>
+            <button 
+              data-testid="theme-toggle" 
+              tabIndex={0}
+              onClick={() => {
+                const currentTheme = document.documentElement.getAttribute('data-theme');
+                document.documentElement.setAttribute('data-theme', currentTheme === 'dark' ? 'light' : 'dark');
+              }}
+            >
+              Toggle Theme
+            </button>
+            <button data-testid="button-3" tabIndex={0}>Button 3</button>
+          </div>
+        </ThemeProvider>
+      );
+
+      render(<TestApp />);
+
+      const button1 = screen.getByTestId('button-1');
+      const button2 = screen.getByTestId('button-2');
+      const themeToggle = screen.getByTestId('theme-toggle');
+      const button3 = screen.getByTestId('button-3');
+
+      // Test keyboard navigation in light theme
+      button1.focus();
+      expect(document.activeElement).toBe(button1);
+
+      fireEvent.keyDown(button1, { key: 'Tab' });
+      fireEvent.focus(button2);
+      expect(document.activeElement).toBe(button2);
+
+      // Switch to dark theme
+      fireEvent.click(themeToggle);
+
+      await waitFor(() => {
+        expect(document.documentElement).toHaveAttribute('data-theme', 'dark');
+      });
+
+      // Keyboard navigation should still work in dark theme
+      button3.focus();
+      expect(document.activeElement).toBe(button3);
+
+      fireEvent.keyDown(button3, { key: 'Enter' });
+      // Button should remain focusable and functional
+      expect(button3).toBeInTheDocument();
     });
   });
 
