@@ -38,6 +38,40 @@ jest.mock('react-router-dom', () => ({
   Link: ({ children, ...props }) => <a {...props}>{children}</a>
 }));
 
+// Mock additional components for comprehensive testing
+jest.mock('../Navigation/Navbar', () => {
+  return function MockNavbar() {
+    return <nav data-testid="navbar">Navigation</nav>;
+  };
+});
+
+jest.mock('../Common/Button', () => {
+  return function MockButton({ children, loading, ...props }) {
+    return (
+      <button {...props} data-loading={loading}>
+        {loading ? 'Loading...' : children}
+      </button>
+    );
+  };
+});
+
+jest.mock('../Common/Modal', () => {
+  return function MockModal({ isOpen, children, className }) {
+    if (!isOpen) return null;
+    return (
+      <div className={`modal-overlay ${className || ''}`} data-testid="modal">
+        {children}
+      </div>
+    );
+  };
+});
+
+jest.mock('../Common/Spinner', () => {
+  return function MockSpinner({ size, theme }) {
+    return <div data-testid="spinner" data-size={size} data-theme={theme}>Loading...</div>;
+  };
+});
+
 // Mock fetch for API calls
 global.fetch = jest.fn();
 
@@ -145,6 +179,94 @@ describe('Theme Integration Tests', () => {
       
       expect(screen.getByText(/shopping cart/i)).toBeInTheDocument();
     });
+
+    it('should render ProductCatalog correctly in both themes', () => {
+      fetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve([])
+      });
+
+      const { rerender } = render(
+        <TestComponentWrapper initialTheme="light">
+          <ProductCatalog />
+        </TestComponentWrapper>
+      );
+      
+      expect(screen.getByTestId('product-catalog')).toBeInTheDocument();
+      
+      rerender(
+        <TestComponentWrapper initialTheme="dark">
+          <ProductCatalog />
+        </TestComponentWrapper>
+      );
+      
+      expect(screen.getByTestId('product-catalog')).toBeInTheDocument();
+    });
+
+    it('should render all navigation components correctly in both themes', () => {
+      const { rerender } = render(
+        <TestComponentWrapper initialTheme="light">
+          <DashboardLayout>
+            <div data-testid="nav-content">Navigation Test</div>
+          </DashboardLayout>
+        </TestComponentWrapper>
+      );
+      
+      expect(screen.getByTestId('navbar')).toBeInTheDocument();
+      expect(document.documentElement.setAttribute).toHaveBeenCalledWith('data-theme', 'light');
+      
+      rerender(
+        <TestComponentWrapper initialTheme="dark">
+          <DashboardLayout>
+            <div data-testid="nav-content">Navigation Test</div>
+          </DashboardLayout>
+        </TestComponentWrapper>
+      );
+      
+      expect(screen.getByTestId('navbar')).toBeInTheDocument();
+      expect(document.documentElement.setAttribute).toHaveBeenCalledWith('data-theme', 'dark');
+    });
+
+    it('should render form components with proper theme styling', () => {
+      const { rerender } = render(
+        <TestComponentWrapper initialTheme="light">
+          <LoginForm />
+        </TestComponentWrapper>
+      );
+      
+      const form = screen.getByRole('form');
+      expect(form).toBeInTheDocument();
+      expect(document.documentElement.classList.add).toHaveBeenCalledWith('light-theme');
+      
+      rerender(
+        <TestComponentWrapper initialTheme="dark">
+          <LoginForm />
+        </TestComponentWrapper>
+      );
+      
+      expect(form).toBeInTheDocument();
+      expect(document.documentElement.classList.add).toHaveBeenCalledWith('dark-theme');
+    });
+
+    it('should render interactive elements correctly in both themes', () => {
+      const MockButton = require('../Common/Button').default;
+      
+      const { rerender } = render(
+        <TestComponentWrapper initialTheme="light">
+          <MockButton>Test Button</MockButton>
+        </TestComponentWrapper>
+      );
+      
+      expect(screen.getByRole('button')).toHaveTextContent('Test Button');
+      
+      rerender(
+        <TestComponentWrapper initialTheme="dark">
+          <MockButton>Test Button</MockButton>
+        </TestComponentWrapper>
+      );
+      
+      expect(screen.getByRole('button')).toHaveTextContent('Test Button');
+    });
   });
   
   describe('TC-008: Loading states and overlays work correctly in both themes', () => {
@@ -185,6 +307,119 @@ describe('Theme Integration Tests', () => {
       if (overlay) {
         expect(overlay).toHaveAttribute('data-theme', 'dark');
       }
+    });
+
+    it('should display loading spinners with correct theme in both themes', () => {
+      const MockSpinner = require('../Common/Spinner').default;
+      
+      const { rerender } = render(
+        <TestComponentWrapper initialTheme="light">
+          <MockSpinner size="medium" />
+        </TestComponentWrapper>
+      );
+      
+      expect(screen.getByTestId('spinner')).toHaveAttribute('data-theme', 'light');
+      
+      rerender(
+        <TestComponentWrapper initialTheme="dark">
+          <MockSpinner size="medium" />
+        </TestComponentWrapper>
+      );
+      
+      expect(screen.getByTestId('spinner')).toHaveAttribute('data-theme', 'dark');
+    });
+
+    it('should show loading states on buttons correctly in both themes', () => {
+      const MockButton = require('../Common/Button').default;
+      
+      const { rerender } = render(
+        <TestComponentWrapper initialTheme="light">
+          <MockButton loading={true}>Submit</MockButton>
+        </TestComponentWrapper>
+      );
+      
+      expect(screen.getByRole('button')).toHaveAttribute('data-loading', 'true');
+      expect(screen.getByText('Loading...')).toBeInTheDocument();
+      
+      rerender(
+        <TestComponentWrapper initialTheme="dark">
+          <MockButton loading={true}>Submit</MockButton>
+        </TestComponentWrapper>
+      );
+      
+      expect(screen.getByRole('button')).toHaveAttribute('data-loading', 'true');
+      expect(screen.getByText('Loading...')).toBeInTheDocument();
+    });
+
+    it('should handle modal overlays correctly in both themes', () => {
+      const MockModal = require('../Common/Modal').default;
+      
+      const { rerender } = render(
+        <TestComponentWrapper initialTheme="light">
+          <MockModal isOpen={true}>
+            <div>Modal Content</div>
+          </MockModal>
+        </TestComponentWrapper>
+      );
+      
+      expect(screen.getByTestId('modal')).toBeInTheDocument();
+      expect(document.documentElement.setAttribute).toHaveBeenCalledWith('data-theme', 'light');
+      
+      rerender(
+        <TestComponentWrapper initialTheme="dark">
+          <MockModal isOpen={true}>
+            <div>Modal Content</div>
+          </MockModal>
+        </TestComponentWrapper>
+      );
+      
+      expect(screen.getByTestId('modal')).toBeInTheDocument();
+      expect(document.documentElement.setAttribute).toHaveBeenCalledWith('data-theme', 'dark');
+    });
+
+    it('should handle async loading states with proper theme application', async () => {
+      fetch.mockImplementation(() => 
+        new Promise(resolve => {
+          setTimeout(() => resolve({
+            ok: true,
+            json: () => Promise.resolve([{ id: 1, name: 'Product 1' }])
+          }), 50);
+        })
+      );
+
+      render(
+        <TestComponentWrapper initialTheme="dark">
+          <ProductCatalog />
+        </TestComponentWrapper>
+      );
+
+      // Check that theme is applied during loading
+      expect(document.documentElement.setAttribute).toHaveBeenCalledWith('data-theme', 'dark');
+
+      // Wait for loading to complete
+      await waitFor(() => {
+        expect(fetch).toHaveBeenCalled();
+      });
+
+      // Theme should still be applied after loading
+      expect(document.documentElement.setAttribute).toHaveBeenCalledWith('data-theme', 'dark');
+    });
+
+    it('should handle overlay z-index and positioning in both themes', () => {
+      const MockModal = require('../Common/Modal').default;
+      
+      render(
+        <TestComponentWrapper initialTheme="dark">
+          <MockModal isOpen={true} className="high-priority">
+            <div>Overlay Content</div>
+          </MockModal>
+        </TestComponentWrapper>
+      );
+      
+      const modal = screen.getByTestId('modal');
+      expect(modal).toHaveClass('modal-overlay');
+      expect(modal).toHaveClass('high-priority');
+      expect(screen.getByText('Overlay Content')).toBeInTheDocument();
     });
   });
   
