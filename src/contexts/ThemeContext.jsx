@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useLayoutEffect, useState } from 'react';
 
 const ThemeContext = createContext();
 
@@ -17,6 +17,10 @@ const THEMES = {
   SYSTEM: 'system'
 };
 
+const validateTheme = (theme) => {
+  return theme && Object.values(THEMES).includes(theme) ? theme : THEMES.SYSTEM;
+};
+
 const getSystemTheme = () => {
   if (typeof window !== 'undefined' && window.matchMedia) {
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? THEMES.DARK : THEMES.LIGHT;
@@ -25,18 +29,15 @@ const getSystemTheme = () => {
 };
 
 const getInitialTheme = () => {
-  if (typeof window === 'undefined') return THEMES.LIGHT;
+  if (typeof window === 'undefined') return THEMES.SYSTEM;
   
   try {
     const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
-    if (savedTheme && Object.values(THEMES).includes(savedTheme)) {
-      return savedTheme;
-    }
+    return validateTheme(savedTheme);
   } catch (error) {
     console.warn('Failed to read theme from localStorage:', error);
+    return THEMES.SYSTEM;
   }
-  
-  return THEMES.SYSTEM;
 };
 
 const getEffectiveTheme = (theme) => {
@@ -47,8 +48,8 @@ export const ThemeProvider = ({ children }) => {
   const [theme, setTheme] = useState(getInitialTheme);
   const [effectiveTheme, setEffectiveTheme] = useState(() => getEffectiveTheme(getInitialTheme()));
 
-  // Apply theme to document root
-  useEffect(() => {
+  // Apply theme to document root synchronously before paint
+  useLayoutEffect(() => {
     const root = document.documentElement;
     root.setAttribute('data-theme', effectiveTheme);
     
@@ -58,7 +59,7 @@ export const ThemeProvider = ({ children }) => {
   }, [effectiveTheme]);
 
   // Handle system theme changes when using system preference
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (theme !== THEMES.SYSTEM) return;
 
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
@@ -72,22 +73,22 @@ export const ThemeProvider = ({ children }) => {
   }, [theme]);
 
   // Update effective theme when theme preference changes
-  useEffect(() => {
+  useLayoutEffect(() => {
     const newEffectiveTheme = getEffectiveTheme(theme);
     setEffectiveTheme(newEffectiveTheme);
   }, [theme]);
 
   const changeTheme = (newTheme) => {
-    if (!Object.values(THEMES).includes(newTheme)) {
-      console.warn(`Invalid theme: ${newTheme}`);
-      return;
+    const validatedTheme = validateTheme(newTheme);
+    if (validatedTheme !== newTheme) {
+      console.warn(`Invalid theme: ${newTheme}, falling back to: ${validatedTheme}`);
     }
 
-    setTheme(newTheme);
+    setTheme(validatedTheme);
     
-    // Persist theme preference
+    // Persist theme preference with error handling
     try {
-      localStorage.setItem(THEME_STORAGE_KEY, newTheme);
+      localStorage.setItem(THEME_STORAGE_KEY, validatedTheme);
     } catch (error) {
       console.warn('Failed to save theme to localStorage:', error);
     }
