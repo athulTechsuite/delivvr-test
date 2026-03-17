@@ -1,8 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useContext } from 'react';
 import { Link } from 'react-router-dom';
+import { ThemeContext } from '../../context/ThemeContext';
 import './RegisterForm.css';
 
 const RegisterForm = ({ onRegister }) => {
+  const { theme } = useContext(ThemeContext);
+  
   const [formData, setFormData] = useState({
     firstName: '',
     lastName: '',
@@ -113,22 +116,22 @@ const RegisterForm = ({ onRegister }) => {
   };
 
   return (
-    <div className="register-form-container">
-      <div className="register-form-card">
-        <div className="register-form-header">
+    <div className={`register-form-container ${theme}`}>
+      <div className={`register-form-card ${theme}`}>
+        <div className={`register-form-header ${theme}`}>
           <h2>Create Your Account</h2>
           <p>Join our eCommerce platform and start shopping!</p>
         </div>
 
-        <form onSubmit={handleSubmit} className="register-form">
+        <form onSubmit={handleSubmit} className={`register-form ${theme}`}>
           {errors.submit && (
-            <div className="error-message submit-error">
+            <div className={`error-message submit-error ${theme}`}>
               {errors.submit}
             </div>
           )}
 
           <div className="form-row">
-            <div className="form-group">
+            <div className={`form-group ${theme}`}>
               <label htmlFor="firstName">First Name *</label>
               <input
                 type="text"
@@ -136,13 +139,13 @@ const RegisterForm = ({ onRegister }) => {
                 name="firstName"
                 value={formData.firstName}
                 onChange={handleChange}
-                className={errors.firstName ? 'error' : ''}
+                className={`${errors.firstName ? 'error' : ''} ${theme}`}
                 placeholder="Enter your first name"
               />
-              {errors.firstName && <span className="error-message">{errors.firstName}</span>}
+              {errors.firstName && <span className={`error-message ${theme}`}>{errors.firstName}</span>}
             </div>
 
-            <div className="form-group">
+            <div className={`form-group ${theme}`}>
               <label htmlFor="lastName">Last Name *</label>
               <input
                 type="text"
@@ -150,14 +153,14 @@ const RegisterForm = ({ onRegister }) => {
                 name="lastName"
                 value={formData.lastName}
                 onChange={handleChange}
-                className={errors.lastName ? 'error' : ''}
+                className={`${errors.lastName ? 'error' : ''} ${theme}`}
                 placeholder="Enter your last name"
               />
-              {errors.lastName && <span className="error-message">{errors.lastName}</span>}
+              {errors.lastName && <span className={`error-message ${theme}`}>{errors.lastName}</span>}
             </div>
           </div>
 
-          <div className="form-group">
+          <div className={`form-group ${theme}`}>
             <label htmlFor="email">Email Address *</label>
             <input
               type="email"
@@ -165,29 +168,29 @@ const RegisterForm = ({ onRegister }) => {
               name="email"
               value={formData.email}
               onChange={handleChange}
-              className={errors.email ? 'error' : ''}
+              className={`${errors.email ? 'error' : ''} ${theme}`}
               placeholder="Enter your email address"
             />
-            {errors.email && <span className="error-message">{errors.email}</span>}
+            {errors.email && <span className={`error-message ${theme}`}>{errors.email}</span>}
           </div>
 
-          <div className="form-group">
+          <div className={`form-group ${theme}`}>
             <label htmlFor="role">Account Type *</label>
             <select
               id="role"
               name="role"
               value={formData.role}
               onChange={handleChange}
-              className={errors.role ? 'error' : ''}
+              className={`${errors.role ? 'error' : ''} ${theme}`}
             >
               <option value="customer">Customer</option>
               <option value="vendor">Vendor</option>
             </select>
-            {errors.role && <span className="error-message">{errors.role}</span>}
+            {errors.role && <span className={`error-message ${theme}`}>{errors.role}</span>}
           </div>
 
           <div className="form-row">
-            <div className="form-group">
+            <div className={`form-group ${theme}`}>
               <label htmlFor="password">Password *</label>
               <input
                 type="password"
@@ -195,13 +198,13 @@ const RegisterForm = ({ onRegister }) => {
                 name="password"
                 value={formData.password}
                 onChange={handleChange}
-                className={errors.password ? 'error' : ''}
+                className={`${errors.password ? 'error' : ''} ${theme}`}
                 placeholder="Create a strong password"
               />
-              {errors.password && <span className="error-message">{errors.password}</span>}
+              {errors.password && <span className={`error-message ${theme}`}>{errors.password}</span>}
             </div>
 
-            <div className="form-group">
+            <div className={`form-group ${theme}`}>
               <label htmlFor="confirmPassword">Confirm Password *</label>
               <input
                 type="password"
@@ -209,14 +212,14 @@ const RegisterForm = ({ onRegister }) => {
                 name="confirmPassword"
                 value={formData.confirmPassword}
                 onChange={handleChange}
-                className={errors.confirmPassword ? 'error' : ''}
+                className={`${errors.confirmPassword ? 'error' : ''} ${theme}`}
                 placeholder="Confirm your password"
               />
-              {errors.confirmPassword && <span className="error-message">{errors.confirmPassword}</span>}
+              {errors.confirmPassword && <span className={`error-message ${theme}`}>{errors.confirmPassword}</span>}
             </div>
           </div>
 
-          <div className="form-group">
+          <div className={`form-group ${theme}`}>
             <label htmlFor="phone">Phone Number</label>
             <input
               type="tel"
@@ -224,13 +227,13 @@ const RegisterForm = ({ onRegister }) => {
               name="phone"
               value={formData.phone}
               onChange={handleChange}
-              className={errors.phone ? 'error' : ''}
+              className={`${errors.phone ? 'error' : ''} ${theme}`}
               placeholder="Enter your phone number (optional)"
             />
-            {errors.phone && <span className="error-message">{errors.phone}</span>}
+            {errors.phone && <span className={`error-message ${theme}`}>{errors.phone}</span>}
           </div>
 
-          <div className="form-group">
+          <div className={`form-group ${theme}`}>
             <label htmlFor="dateOfBirth">Date of Birth</label>
             <input
               type="date"
@@ -238,34 +241,34 @@ const RegisterForm = ({ onRegister }) => {
               name="dateOfBirth"
               value={formData.dateOfBirth}
               onChange={handleChange}
-              className={errors.dateOfBirth ? 'error' : ''}
+              className={`${errors.dateOfBirth ? 'error' : ''} ${theme}`}
             />
-            {errors.dateOfBirth && <span className="error-message">{errors.dateOfBirth}</span>}
+            {errors.dateOfBirth && <span className={`error-message ${theme}`}>{errors.dateOfBirth}</span>}
           </div>
 
-          <div className="form-group checkbox-group">
-            <label className="checkbox-label">
+          <div className={`form-group checkbox-group ${theme}`}>
+            <label className={`checkbox-label ${theme}`}>
               <input
                 type="checkbox"
                 name="acceptTerms"
                 checked={formData.acceptTerms}
                 onChange={handleChange}
-                className={errors.acceptTerms ? 'error' : ''}
+                className={`${errors.acceptTerms ? 'error' : ''} ${theme}`}
               />
-              <span className="checkbox-text">
-                I accept the <Link to="/terms" target="_blank">Terms and Conditions</Link> and <Link to="/privacy" target="_blank">Privacy Policy</Link> *
+              <span className={`checkbox-text ${theme}`}>
+                I accept the <Link to="/terms" target="_blank" className={theme}>Terms and Conditions</Link> and <Link to="/privacy" target="_blank" className={theme}>Privacy Policy</Link> *
               </span>
             </label>
-            {errors.acceptTerms && <span className="error-message">{errors.acceptTerms}</span>}
+            {errors.acceptTerms && <span className={`error-message ${theme}`}>{errors.acceptTerms}</span>}
           </div>
 
           <button 
             type="submit" 
-            className="register-button"
+            className={`register-button ${theme}`}
             disabled={isLoading}
           >
             {isLoading ? (
-              <span className="loading-spinner">
+              <span className={`loading-spinner ${theme}`}>
                 <i className="spinner"></i>
                 Creating Account...
               </span>
@@ -275,10 +278,10 @@ const RegisterForm = ({ onRegister }) => {
           </button>
         </form>
 
-        <div className="register-form-footer">
+        <div className={`register-form-footer ${theme}`}>
           <p>
             Already have an account? 
-            <Link to="/login" className="login-link">Sign in here</Link>
+            <Link to="/login" className={`login-link ${theme}`}>Sign in here</Link>
           </p>
         </div>
       </div>
