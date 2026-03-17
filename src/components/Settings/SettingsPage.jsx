@@ -40,118 +40,123 @@ const SettingsPage = () => {
             </div>
 
             <div className="setting-group">
-              <label className="setting-label">
-                Theme
-                <span className="setting-description">
-                  Select your preferred theme. System will use your device's theme setting.
-                </span>
-              </label>
+              <fieldset className="theme-fieldset">
+                <legend className="setting-label">
+                  Theme
+                  <span className="setting-description">
+                    Select your preferred theme. System will use your device's theme setting.
+                  </span>
+                </legend>
 
-              <div className="theme-options" role="radiogroup" aria-labelledby="theme-label">
-                <div
-                  className={`theme-option ${selectedTheme === 'light' ? 'selected' : ''}`}
-                  role="radio"
-                  tabIndex={selectedTheme === 'light' ? 0 : -1}
-                  aria-checked={selectedTheme === 'light'}
-                  onClick={() => handleThemeChange('light')}
-                  onKeyDown={(e) => handleKeyDown(e, 'light')}
-                >
-                  <div className="theme-preview light-preview">
-                    <div className="preview-header"></div>
-                    <div className="preview-content">
-                      <div className="preview-text"></div>
-                      <div className="preview-text short"></div>
-                    </div>
-                  </div>
-                  <div className="theme-info">
-                    <span className="theme-name">Light</span>
-                    <span className="theme-desc">Clean and bright interface</span>
-                  </div>
-                  <div className="theme-radio">
-                    <input
-                      type="radio"
-                      name="theme"
-                      value="light"
-                      checked={selectedTheme === 'light'}
-                      onChange={() => handleThemeChange('light')}
-                      aria-label="Light theme"
-                    />
-                  </div>
-                </div>
-
-                <div
-                  className={`theme-option ${selectedTheme === 'dark' ? 'selected' : ''}`}
-                  role="radio"
-                  tabIndex={selectedTheme === 'dark' ? 0 : -1}
-                  aria-checked={selectedTheme === 'dark'}
-                  onClick={() => handleThemeChange('dark')}
-                  onKeyDown={(e) => handleKeyDown(e, 'dark')}
-                >
-                  <div className="theme-preview dark-preview">
-                    <div className="preview-header"></div>
-                    <div className="preview-content">
-                      <div className="preview-text"></div>
-                      <div className="preview-text short"></div>
-                    </div>
-                  </div>
-                  <div className="theme-info">
-                    <span className="theme-name">Dark</span>
-                    <span className="theme-desc">Easy on the eyes in low light</span>
-                  </div>
-                  <div className="theme-radio">
-                    <input
-                      type="radio"
-                      name="theme"
-                      value="dark"
-                      checked={selectedTheme === 'dark'}
-                      onChange={() => handleThemeChange('dark')}
-                      aria-label="Dark theme"
-                    />
-                  </div>
-                </div>
-
-                <div
-                  className={`theme-option ${selectedTheme === 'system' ? 'selected' : ''}`}
-                  role="radio"
-                  tabIndex={selectedTheme === 'system' ? 0 : -1}
-                  aria-checked={selectedTheme === 'system'}
-                  onClick={() => handleThemeChange('system')}
-                  onKeyDown={(e) => handleKeyDown(e, 'system')}
-                >
-                  <div className="theme-preview system-preview">
-                    <div className="preview-split">
-                      <div className="preview-half light">
-                        <div className="preview-header"></div>
-                        <div className="preview-content">
-                          <div className="preview-text"></div>
-                        </div>
-                      </div>
-                      <div className="preview-half dark">
-                        <div className="preview-header"></div>
-                        <div className="preview-content">
-                          <div className="preview-text"></div>
-                        </div>
+                <div className="theme-options" role="radiogroup" aria-labelledby="theme-legend">
+                  <div
+                    className={`theme-option ${selectedTheme === 'light' ? 'selected' : ''}`}
+                    role="radio"
+                    tabIndex={selectedTheme === 'light' ? 0 : -1}
+                    aria-checked={selectedTheme === 'light'}
+                    aria-labelledby="light-theme-label"
+                    onClick={() => handleThemeChange('light')}
+                    onKeyDown={(e) => handleKeyDown(e, 'light')}
+                  >
+                    <div className="theme-preview light-preview">
+                      <div className="preview-header"></div>
+                      <div className="preview-content">
+                        <div className="preview-text"></div>
+                        <div className="preview-text short"></div>
                       </div>
                     </div>
+                    <div className="theme-info">
+                      <span className="theme-name" id="light-theme-label">Light</span>
+                      <span className="theme-desc">Clean and bright interface</span>
+                    </div>
+                    <div className="theme-radio">
+                      <input
+                        type="radio"
+                        name="theme"
+                        value="light"
+                        checked={selectedTheme === 'light'}
+                        onChange={() => handleThemeChange('light')}
+                        aria-labelledby="light-theme-label"
+                      />
+                    </div>
                   </div>
-                  <div className="theme-info">
-                    <span className="theme-name">System</span>
-                    <span className="theme-desc">
-                      Use device setting ({systemPreference})
-                    </span>
+
+                  <div
+                    className={`theme-option ${selectedTheme === 'dark' ? 'selected' : ''}`}
+                    role="radio"
+                    tabIndex={selectedTheme === 'dark' ? 0 : -1}
+                    aria-checked={selectedTheme === 'dark'}
+                    aria-labelledby="dark-theme-label"
+                    onClick={() => handleThemeChange('dark')}
+                    onKeyDown={(e) => handleKeyDown(e, 'dark')}
+                  >
+                    <div className="theme-preview dark-preview">
+                      <div className="preview-header"></div>
+                      <div className="preview-content">
+                        <div className="preview-text"></div>
+                        <div className="preview-text short"></div>
+                      </div>
+                    </div>
+                    <div className="theme-info">
+                      <span className="theme-name" id="dark-theme-label">Dark</span>
+                      <span className="theme-desc">Easy on the eyes in low light</span>
+                    </div>
+                    <div className="theme-radio">
+                      <input
+                        type="radio"
+                        name="theme"
+                        value="dark"
+                        checked={selectedTheme === 'dark'}
+                        onChange={() => handleThemeChange('dark')}
+                        aria-labelledby="dark-theme-label"
+                      />
+                    </div>
                   </div>
-                  <div className="theme-radio">
-                    <input
-                      type="radio"
-                      name="theme"
-                      value="system"
-                      checked={selectedTheme === 'system'}
-                      onChange={() => handleThemeChange('system')}
-                      aria-label="System theme"
-                    />
+
+                  <div
+                    className={`theme-option ${selectedTheme === 'system' ? 'selected' : ''}`}
+                    role="radio"
+                    tabIndex={selectedTheme === 'system' ? 0 : -1}
+                    aria-checked={selectedTheme === 'system'}
+                    aria-labelledby="system-theme-label"
+                    onClick={() => handleThemeChange('system')}
+                    onKeyDown={(e) => handleKeyDown(e, 'system')}
+                  >
+                    <div className="theme-preview system-preview">
+                      <div className="preview-split">
+                        <div className="preview-half light">
+                          <div className="preview-header"></div>
+                          <div className="preview-content">
+                            <div className="preview-text"></div>
+                          </div>
+                        </div>
+                        <div className="preview-half dark">
+                          <div className="preview-header"></div>
+                          <div className="preview-content">
+                            <div className="preview-text"></div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="theme-info">
+                      <span className="theme-name" id="system-theme-label">System</span>
+                      <span className="theme-desc">
+                        Use device setting ({systemPreference})
+                      </span>
+                    </div>
+                    <div className="theme-radio">
+                      <input
+                        type="radio"
+                        name="theme"
+                        value="system"
+                        checked={selectedTheme === 'system'}
+                        onChange={() => handleThemeChange('system')}
+                        aria-labelledby="system-theme-label"
+                      />
+                    </div>
                   </div>
                 </div>
-              </div>
+              </fieldset>
             </div>
           </section>
 
