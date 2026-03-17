@@ -157,21 +157,21 @@ const VendorDashboard = ({ user }) => {
 
   const getStatusColor = (status) => {
     switch (status) {
-      case 'active': return 'bg-green-100 text-green-800';
-      case 'out_of_stock': return 'bg-red-100 text-red-800';
-      case 'pending': return 'bg-yellow-100 text-yellow-800';
-      case 'shipped': return 'bg-blue-100 text-blue-800';
-      default: return 'bg-gray-100 text-gray-800';
+      case 'active': return 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300';
+      case 'out_of_stock': return 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-300';
+      case 'pending': return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-300';
+      case 'shipped': return 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-300';
+      default: return 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300';
     }
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 transition-colors duration-300">
       {/* Header */}
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Vendor Dashboard</h1>
-          <p className="text-gray-600">Welcome back, {user?.name}</p>
+          <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">Vendor Dashboard</h1>
+          <p className="text-gray-600 dark:text-gray-400">Welcome back, {user?.name}</p>
         </div>
         <Button 
           onClick={() => setShowAddProduct(true)}
@@ -184,49 +184,49 @@ const VendorDashboard = ({ user }) => {
 
       {/* Analytics Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <Card>
+        <Card className="transition-colors duration-300">
           <CardContent className="flex items-center p-6">
             <div className="flex items-center">
-              <DollarSign className="h-8 w-8 text-green-600" />
+              <DollarSign className="h-8 w-8 text-green-600 dark:text-green-400" />
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">Total Revenue</p>
-                <p className="text-2xl font-bold text-gray-900">${analytics.totalRevenue.toFixed(2)}</p>
+                <p className="text-sm font-medium text-gray-600 dark:text-gray-400">Total Revenue</p>
+                <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">${analytics.totalRevenue.toFixed(2)}</p>
               </div>
             </div>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="transition-colors duration-300">
           <CardContent className="flex items-center p-6">
             <div className="flex items-center">
-              <ShoppingCart className="h-8 w-8 text-blue-600" />
+              <ShoppingCart className="h-8 w-8 text-blue-600 dark:text-blue-400" />
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">Total Orders</p>
-                <p className="text-2xl font-bold text-gray-900">{analytics.totalOrders}</p>
+                <p className="text-sm font-medium text-gray-600 dark:text-gray-400">Total Orders</p>
+                <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">{analytics.totalOrders}</p>
               </div>
             </div>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="transition-colors duration-300">
           <CardContent className="flex items-center p-6">
             <div className="flex items-center">
-              <Package className="h-8 w-8 text-purple-600" />
+              <Package className="h-8 w-8 text-purple-600 dark:text-purple-400" />
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">Total Products</p>
-                <p className="text-2xl font-bold text-gray-900">{analytics.totalProducts}</p>
+                <p className="text-sm font-medium text-gray-600 dark:text-gray-400">Total Products</p>
+                <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">{analytics.totalProducts}</p>
               </div>
             </div>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="transition-colors duration-300">
           <CardContent className="flex items-center p-6">
             <div className="flex items-center">
-              <AlertCircle className="h-8 w-8 text-red-600" />
+              <AlertCircle className="h-8 w-8 text-red-600 dark:text-red-400" />
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">Low Stock</p>
-                <p className="text-2xl font-bold text-gray-900">{analytics.lowStockCount}</p>
+                <p className="text-sm font-medium text-gray-600 dark:text-gray-400">Low Stock</p>
+                <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">{analytics.lowStockCount}</p>
               </div>
             </div>
           </CardContent>
@@ -235,9 +235,9 @@ const VendorDashboard = ({ user }) => {
 
       {/* Add/Edit Product Modal */}
       {showAddProduct && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md mx-4">
-            <h3 className="text-lg font-semibold mb-4">
+        <div className="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-50 transition-all duration-300">
+          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 w-full max-w-md mx-4 transition-colors duration-300 shadow-xl">
+            <h3 className="text-lg font-semibold mb-4 text-gray-900 dark:text-gray-100">
               {editingProduct ? 'Edit Product' : 'Add New Product'}
             </h3>
             <div className="space-y-4">
@@ -245,10 +245,11 @@ const VendorDashboard = ({ user }) => {
                 placeholder="Product Name"
                 value={newProduct.name}
                 onChange={(e) => setNewProduct({...newProduct, name: e.target.value})}
+                className="transition-colors duration-300"
               />
               <textarea
                 placeholder="Description"
-                className="w-full p-2 border border-gray-300 rounded-md"
+                className="w-full p-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 rounded-md transition-colors duration-300 focus:border-blue-500 dark:focus:border-blue-400 focus:ring-1 focus:ring-blue-500 dark:focus:ring-blue-400"
                 rows="3"
                 value={newProduct.description}
                 onChange={(e) => setNewProduct({...newProduct, description: e.target.value})}
@@ -259,22 +260,26 @@ const VendorDashboard = ({ user }) => {
                 step="0.01"
                 value={newProduct.price}
                 onChange={(e) => setNewProduct({...newProduct, price: e.target.value})}
+                className="transition-colors duration-300"
               />
               <Input
                 placeholder="Stock Quantity"
                 type="number"
                 value={newProduct.stock}
                 onChange={(e) => setNewProduct({...newProduct, stock: e.target.value})}
+                className="transition-colors duration-300"
               />
               <Input
                 placeholder="Category"
                 value={newProduct.category}
                 onChange={(e) => setNewProduct({...newProduct, category: e.target.value})}
+                className="transition-colors duration-300"
               />
               <Input
                 placeholder="Image URL"
                 value={newProduct.image}
                 onChange={(e) => setNewProduct({...newProduct, image: e.target.value})}
+                className="transition-colors duration-300"
               />
             </div>
             <div className="flex gap-2 mt-6">
@@ -302,9 +307,9 @@ const VendorDashboard = ({ user }) => {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Products Management */}
-        <Card>
+        <Card className="transition-colors duration-300">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
+            <CardTitle className="flex items-center gap-2 text-gray-900 dark:text-gray-100">
               <Package className="h-5 w-5" />
               Product Inventory
             </CardTitle>
@@ -312,10 +317,10 @@ const VendorDashboard = ({ user }) => {
           <CardContent>
             <div className="space-y-4">
               {products.map((product) => (
-                <div key={product.id} className="flex items-center justify-between p-4 border rounded-lg">
+                <div key={product.id} className="flex items-center justify-between p-4 border border-gray-200 dark:border-gray-700 rounded-lg transition-colors duration-300">
                   <div className="flex-1">
-                    <h4 className="font-medium">{product.name}</h4>
-                    <p className="text-sm text-gray-600">
+                    <h4 className="font-medium text-gray-900 dark:text-gray-100">{product.name}</h4>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">
                       ${product.price} • Stock: {product.stock} • Sales: {product.sales}
                     </p>
                     <Badge className={getStatusColor(product.status)}>
@@ -327,6 +332,7 @@ const VendorDashboard = ({ user }) => {
                       variant="outline"
                       size="sm"
                       onClick={() => handleEditProduct(product)}
+                      className="transition-colors duration-300"
                     >
                       <Edit className="h-4 w-4" />
                     </Button>
@@ -334,7 +340,7 @@ const VendorDashboard = ({ user }) => {
                       variant="outline"
                       size="sm"
                       onClick={() => handleDeleteProduct(product.id)}
-                      className="text-red-600 hover:text-red-700"
+                      className="text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 transition-colors duration-300"
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>
@@ -346,9 +352,9 @@ const VendorDashboard = ({ user }) => {
         </Card>
 
         {/* Recent Orders */}
-        <Card>
+        <Card className="transition-colors duration-300">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
+            <CardTitle className="flex items-center gap-2 text-gray-900 dark:text-gray-100">
               <TrendingUp className="h-5 w-5" />
               Recent Orders
             </CardTitle>
@@ -356,18 +362,18 @@ const VendorDashboard = ({ user }) => {
           <CardContent>
             <div className="space-y-4">
               {orders.map((order) => (
-                <div key={order.id} className="flex items-center justify-between p-4 border rounded-lg">
+                <div key={order.id} className="flex items-center justify-between p-4 border border-gray-200 dark:border-gray-700 rounded-lg transition-colors duration-300">
                   <div className="flex-1">
-                    <h4 className="font-medium">{order.id}</h4>
-                    <p className="text-sm text-gray-600">
+                    <h4 className="font-medium text-gray-900 dark:text-gray-100">{order.id}</h4>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">
                       {order.customer} • ${order.total}
                     </p>
-                    <p className="text-xs text-gray-500">{order.date}</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-500">{order.date}</p>
                     <Badge className={getStatusColor(order.status)}>
                       {order.status}
                     </Badge>
                   </div>
-                  <Button variant="outline" size="sm">
+                  <Button variant="outline" size="sm" className="transition-colors duration-300">
                     <Eye className="h-4 w-4" />
                   </Button>
                 </div>
@@ -378,12 +384,12 @@ const VendorDashboard = ({ user }) => {
       </div>
 
       {/* Sales Analytics */}
-      <Card>
+      <Card className="transition-colors duration-300">
         <CardHeader>
-          <CardTitle>Sales Performance</CardTitle>
+          <CardTitle className="text-gray-900 dark:text-gray-100">Sales Performance</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="text-center py-8 text-gray-500">
+          <div className="text-center py-8 text-gray-500 dark:text-gray-400">
             <TrendingUp className="h-12 w-12 mx-auto mb-4 opacity-50" />
             <p>Sales analytics chart would be implemented here</p>
             <p className="text-sm">Integration with charting library (Chart.js, Recharts, etc.)</p>
