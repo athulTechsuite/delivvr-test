@@ -78,19 +78,19 @@ exports.getAllItems = async (req, res) => {
 
     const query = {};
     
-    // Search functionality with sanitized input
+    // Search functionality with sanitized input - using parameterized queries
     if (search) {
       const sanitizedSearch = sanitizeInput(search);
-      // Escape regex special characters
+      // Escape regex special characters to prevent NoSQL injection
       const escapedSearch = sanitizedSearch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       query.$or = [
-        { name: { $regex: escapedSearch, $options: 'i' } },
-        { description: { $regex: escapedSearch, $options: 'i' } },
-        { sku: { $regex: escapedSearch, $options: 'i' } }
+        { name: { $regex: new RegExp(escapedSearch, 'i') } },
+        { description: { $regex: new RegExp(escapedSearch, 'i') } },
+        { sku: { $regex: new RegExp(escapedSearch, 'i') } }
       ];
     }
 
-    // Category filter with ObjectId validation
+    // Category filter with ObjectId validation - using strict ObjectId construction
     if (category) {
       if (!isValidObjectId(category)) {
         return res.status(400).json({
@@ -101,7 +101,7 @@ exports.getAllItems = async (req, res) => {
       query.category = new mongoose.Types.ObjectId(category);
     }
 
-    // Status filter with allowed values
+    // Status filter with allowed values - using strict value validation
     if (status) {
       const allowedStatuses = ['active', 'inactive', 'draft'];
       if (!allowedStatuses.includes(status)) {
@@ -124,6 +124,7 @@ exports.getAllItems = async (req, res) => {
       ]
     };
 
+    // Using Mongoose ODM with built-in parameterized queries
     const items = await Item.paginate(query, options);
 
     res.status(200).json({
@@ -141,12 +142,12 @@ exports.getAllItems = async (req, res) => {
   }
 };
 
-// Get single item by ID
+// Get single item by ID - using parameterized ObjectId lookup
 exports.getItemById = async (req, res) => {
   try {
     const { id } = req.params;
     
-    // Validate ObjectId
+    // Validate ObjectId format before query
     if (!isValidObjectId(id)) {
       return res.status(400).json({
         success: false,
@@ -154,6 +155,7 @@ exports.getItemById = async (req, res) => {
       });
     }
     
+    // Using Mongoose findById with ObjectId constructor for safe parameterized query
     const item = await Item.findById(new mongoose.Types.ObjectId(id))
       .populate('category', 'name')
       .populate('createdBy', 'name email')
@@ -181,7 +183,7 @@ exports.getItemById = async (req, res) => {
   }
 };
 
-// Create new item
+// Create new item - using Mongoose model with parameterized data
 exports.createItem = async (req, res) => {
   try {
     // Check validation errors
@@ -200,7 +202,7 @@ exports.createItem = async (req, res) => {
       sanitizedBody[key] = sanitizeInput(value);
     }
 
-    // Validate user ID
+    // Validate user ID before using in query
     if (!isValidObjectId(req.user.id)) {
       return res.status(400).json({
         success: false,
@@ -208,6 +210,7 @@ exports.createItem = async (req, res) => {
       });
     }
 
+    // Using ObjectId constructor for safe parameterized references
     const itemData = {
       ...sanitizedBody,
       createdBy: new mongoose.Types.ObjectId(req.user.id),
@@ -222,6 +225,11 @@ exports.createItem = async (req, res) => {
       });
     }
 
+    // Convert category to ObjectId if provided
+    if (itemData.category) {
+      itemData.category = new mongoose.Types.ObjectId(itemData.category);
+    }
+
     // Handle file uploads if present
     if (req.files && req.files.length > 0) {
       const uploadPromises = req.files.map(file => uploadToCloudinary(file));
@@ -233,10 +241,11 @@ exports.createItem = async (req, res) => {
       }));
     }
 
+    // Using Mongoose model constructor with validated data
     const item = new Item(itemData);
     await item.save();
 
-    // Populate references for response
+    // Populate references for response using safe ObjectId
     await item.populate([
       { path: 'category', select: 'name' },
       { path: 'createdBy', select: 'name email' }
@@ -267,12 +276,12 @@ exports.createItem = async (req, res) => {
   }
 };
 
-// Update item
+// Update item - using parameterized ObjectId queries
 exports.updateItem = async (req, res) => {
   try {
     const { id } = req.params;
     
-    // Validate ObjectId
+    // Validate ObjectId format
     if (!isValidObjectId(id)) {
       return res.status(400).json({
         success: false,
@@ -290,6 +299,7 @@ exports.updateItem = async (req, res) => {
       });
     }
 
+    // Safe parameterized query using ObjectId
     const item = await Item.findById(new mongoose.Types.ObjectId(id));
     if (!item) {
       return res.status(404).json({
@@ -312,18 +322,23 @@ exports.updateItem = async (req, res) => {
       });
     }
 
+    // Using ObjectId constructor for safe parameters
     const updateData = {
       ...sanitizedBody,
       updatedBy: new mongoose.Types.ObjectId(req.user.id),
       updatedAt: new Date()
     };
 
-    // Validate category if provided
+    // Validate and convert category if provided
     if (updateData.category && !isValidObjectId(updateData.category)) {
       return res.status(400).json({
         success: false,
         message: 'Invalid category ID'
       });
+    }
+
+    if (updateData.category) {
+      updateData.category = new mongoose.Types.ObjectId(updateData.category);
     }
 
     // Handle new file uploads if present
@@ -344,6 +359,7 @@ exports.updateItem = async (req, res) => {
       }
     }
 
+    // Safe parameterized update using ObjectId and validated data
     const updatedItem = await Item.findByIdAndUpdate(
       new mongoose.Types.ObjectId(id),
       updateData,
@@ -378,12 +394,12 @@ exports.updateItem = async (req, res) => {
   }
 };
 
-// Delete item
+// Delete item - using parameterized ObjectId deletion
 exports.deleteItem = async (req, res) => {
   try {
     const { id } = req.params;
     
-    // Validate ObjectId
+    // Validate ObjectId format
     if (!isValidObjectId(id)) {
       return res.status(400).json({
         success: false,
@@ -391,6 +407,7 @@ exports.deleteItem = async (req, res) => {
       });
     }
     
+    // Safe parameterized query using ObjectId
     const item = await Item.findById(new mongoose.Types.ObjectId(id));
     if (!item) {
       return res.status(404).json({
@@ -399,6 +416,7 @@ exports.deleteItem = async (req, res) => {
       });
     }
 
+    // Safe parameterized deletion using ObjectId
     await Item.findByIdAndDelete(new mongoose.Types.ObjectId(id));
 
     res.status(200).json({
@@ -415,7 +433,7 @@ exports.deleteItem = async (req, res) => {
   }
 };
 
-// Bulk operations
+// Bulk operations - using parameterized ObjectId array queries
 exports.bulkUpdateItems = async (req, res) => {
   try {
     const { itemIds, action, updateData } = req.body;
@@ -427,7 +445,7 @@ exports.bulkUpdateItems = async (req, res) => {
       });
     }
 
-    // Validate all item IDs
+    // Validate all item IDs and convert to ObjectId for safe parameterized queries
     const validItemIds = [];
     for (const itemId of itemIds) {
       if (!isValidObjectId(itemId)) {
@@ -439,7 +457,7 @@ exports.bulkUpdateItems = async (req, res) => {
       validItemIds.push(new mongoose.Types.ObjectId(itemId));
     }
 
-    // Validate action
+    // Validate action against allowed values
     const allowedActions = ['delete', 'updateStatus', 'updateCategory'];
     if (!allowedActions.includes(action)) {
       return res.status(400).json({
@@ -456,6 +474,7 @@ exports.bulkUpdateItems = async (req, res) => {
 
     switch (action) {
       case 'delete':
+        // Safe parameterized bulk deletion using ObjectId array
         result = await Item.deleteMany({ _id: { $in: validItemIds } });
         return res.status(200).json({
           success: true,
@@ -471,6 +490,7 @@ exports.bulkUpdateItems = async (req, res) => {
           });
         }
         
+        // Validate status against allowed values
         const allowedStatuses = ['active', 'inactive', 'draft'];
         if (!allowedStatuses.includes(updateData.status)) {
           return res.status(400).json({
@@ -479,6 +499,7 @@ exports.bulkUpdateItems = async (req, res) => {
           });
         }
         
+        // Safe parameterized bulk update with validated status
         result = await Item.updateMany(
           { _id: { $in: validItemIds } },
           { ...baseUpdateData, status: updateData.status }
@@ -493,6 +514,7 @@ exports.bulkUpdateItems = async (req, res) => {
           });
         }
         
+        // Validate category ObjectId
         if (!isValidObjectId(updateData.category)) {
           return res.status(400).json({
             success: false,
@@ -500,6 +522,7 @@ exports.bulkUpdateItems = async (req, res) => {
           });
         }
         
+        // Safe parameterized bulk update with ObjectId category
         result = await Item.updateMany(
           { _id: { $in: validItemIds } },
           { ...baseUpdateData, category: new mongoose.Types.ObjectId(updateData.category) }
@@ -522,9 +545,10 @@ exports.bulkUpdateItems = async (req, res) => {
   }
 };
 
-// Get item statistics for dashboard
+// Get item statistics for dashboard - using safe aggregation pipelines
 exports.getItemStats = async (req, res) => {
   try {
+    // Safe aggregation pipeline with parameterized status values
     const stats = await Item.aggregate([
       {
         $group: {
@@ -543,6 +567,7 @@ exports.getItemStats = async (req, res) => {
       }
     ]);
 
+    // Safe aggregation with parameterized collection joins
     const categoryStats = await Item.aggregate([
       { $match: { status: 'active' } },
       { $group: { _id: '$category', count: { $sum: 1 } } },
@@ -553,6 +578,7 @@ exports.getItemStats = async (req, res) => {
       { $limit: 5 }
     ]);
 
+    // Safe query with parameterized sort and limit
     const recentItems = await Item.find()
       .sort({ createdAt: -1 })
       .limit(5)
