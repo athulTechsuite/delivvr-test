@@ -1,10 +1,36 @@
 const Item = require('../models/Item');
 const { validationResult } = require('express-validator');
 const { uploadToCloudinary } = require('../services/fileUploadService');
+const mongoose = require('mongoose');
+const DOMPurify = require('isomorphic-dompurify');
+
+// Input sanitization helper
+const sanitizeInput = (input) => {
+  if (typeof input === 'string') {
+    return DOMPurify.sanitize(input.trim());
+  }
+  return input;
+};
+
+// Validate MongoDB ObjectId
+const isValidObjectId = (id) => {
+  return mongoose.Types.ObjectId.isValid(id);
+};
+
+// Sanitize query parameters
+const sanitizeQueryParams = (query) => {
+  const sanitized = {};
+  for (const [key, value] of Object.entries(query)) {
+    sanitized[key] = sanitizeInput(value);
+  }
+  return sanitized;
+};
 
 // Get all items with pagination, search, and filtering
 exports.getAllItems = async (req, res) => {
   try {
+    const sanitizedQuery = sanitizeQueryParams(req.query);
+    
     const {
       page = 1,
       limit = 10,
@@ -13,32 +39,83 @@ exports.getAllItems = async (req, res) => {
       status = '',
       sortBy = 'createdAt',
       sortOrder = 'desc'
-    } = req.query;
+    } = sanitizedQuery;
+
+    // Validate pagination parameters
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    
+    if (isNaN(pageNum) || pageNum < 1) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid page parameter'
+      });
+    }
+    
+    if (isNaN(limitNum) || limitNum < 1 || limitNum > 100) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid limit parameter (must be between 1 and 100)'
+      });
+    }
+
+    // Validate sortBy parameter against allowed fields
+    const allowedSortFields = ['createdAt', 'updatedAt', 'name', 'status', 'category'];
+    if (!allowedSortFields.includes(sortBy)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid sortBy parameter'
+      });
+    }
+
+    // Validate sortOrder parameter
+    if (!['asc', 'desc'].includes(sortOrder)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid sortOrder parameter'
+      });
+    }
 
     const query = {};
     
-    // Search functionality
+    // Search functionality with sanitized input
     if (search) {
+      const sanitizedSearch = sanitizeInput(search);
+      // Escape regex special characters
+      const escapedSearch = sanitizedSearch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       query.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { description: { $regex: search, $options: 'i' } },
-        { sku: { $regex: search, $options: 'i' } }
+        { name: { $regex: escapedSearch, $options: 'i' } },
+        { description: { $regex: escapedSearch, $options: 'i' } },
+        { sku: { $regex: escapedSearch, $options: 'i' } }
       ];
     }
 
-    // Category filter
+    // Category filter with ObjectId validation
     if (category) {
-      query.category = category;
+      if (!isValidObjectId(category)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid category ID'
+        });
+      }
+      query.category = new mongoose.Types.ObjectId(category);
     }
 
-    // Status filter
+    // Status filter with allowed values
     if (status) {
+      const allowedStatuses = ['active', 'inactive', 'draft'];
+      if (!allowedStatuses.includes(status)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid status value'
+        });
+      }
       query.status = status;
     }
 
     const options = {
-      page: parseInt(page),
-      limit: parseInt(limit),
+      page: pageNum,
+      limit: limitNum,
       sort: { [sortBy]: sortOrder === 'desc' ? -1 : 1 },
       populate: [
         { path: 'category', select: 'name' },
@@ -69,7 +146,15 @@ exports.getItemById = async (req, res) => {
   try {
     const { id } = req.params;
     
-    const item = await Item.findById(id)
+    // Validate ObjectId
+    if (!isValidObjectId(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid item ID format'
+      });
+    }
+    
+    const item = await Item.findById(new mongoose.Types.ObjectId(id))
       .populate('category', 'name')
       .populate('createdBy', 'name email')
       .populate('updatedBy', 'name email');
@@ -109,11 +194,33 @@ exports.createItem = async (req, res) => {
       });
     }
 
+    // Sanitize request body
+    const sanitizedBody = {};
+    for (const [key, value] of Object.entries(req.body)) {
+      sanitizedBody[key] = sanitizeInput(value);
+    }
+
+    // Validate user ID
+    if (!isValidObjectId(req.user.id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid user ID'
+      });
+    }
+
     const itemData = {
-      ...req.body,
-      createdBy: req.user.id,
-      updatedBy: req.user.id
+      ...sanitizedBody,
+      createdBy: new mongoose.Types.ObjectId(req.user.id),
+      updatedBy: new mongoose.Types.ObjectId(req.user.id)
     };
+
+    // Validate category if provided
+    if (itemData.category && !isValidObjectId(itemData.category)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid category ID'
+      });
+    }
 
     // Handle file uploads if present
     if (req.files && req.files.length > 0) {
@@ -165,6 +272,14 @@ exports.updateItem = async (req, res) => {
   try {
     const { id } = req.params;
     
+    // Validate ObjectId
+    if (!isValidObjectId(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid item ID format'
+      });
+    }
+    
     // Check validation errors
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -175,7 +290,7 @@ exports.updateItem = async (req, res) => {
       });
     }
 
-    const item = await Item.findById(id);
+    const item = await Item.findById(new mongoose.Types.ObjectId(id));
     if (!item) {
       return res.status(404).json({
         success: false,
@@ -183,11 +298,33 @@ exports.updateItem = async (req, res) => {
       });
     }
 
+    // Sanitize request body
+    const sanitizedBody = {};
+    for (const [key, value] of Object.entries(req.body)) {
+      sanitizedBody[key] = sanitizeInput(value);
+    }
+
+    // Validate user ID
+    if (!isValidObjectId(req.user.id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid user ID'
+      });
+    }
+
     const updateData = {
-      ...req.body,
-      updatedBy: req.user.id,
+      ...sanitizedBody,
+      updatedBy: new mongoose.Types.ObjectId(req.user.id),
       updatedAt: new Date()
     };
+
+    // Validate category if provided
+    if (updateData.category && !isValidObjectId(updateData.category)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid category ID'
+      });
+    }
 
     // Handle new file uploads if present
     if (req.files && req.files.length > 0) {
@@ -208,7 +345,7 @@ exports.updateItem = async (req, res) => {
     }
 
     const updatedItem = await Item.findByIdAndUpdate(
-      id,
+      new mongoose.Types.ObjectId(id),
       updateData,
       { new: true, runValidators: true }
     ).populate([
@@ -246,7 +383,15 @@ exports.deleteItem = async (req, res) => {
   try {
     const { id } = req.params;
     
-    const item = await Item.findById(id);
+    // Validate ObjectId
+    if (!isValidObjectId(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid item ID format'
+      });
+    }
+    
+    const item = await Item.findById(new mongoose.Types.ObjectId(id));
     if (!item) {
       return res.status(404).json({
         success: false,
@@ -254,7 +399,7 @@ exports.deleteItem = async (req, res) => {
       });
     }
 
-    await Item.findByIdAndDelete(id);
+    await Item.findByIdAndDelete(new mongoose.Types.ObjectId(id));
 
     res.status(200).json({
       success: true,
@@ -282,15 +427,36 @@ exports.bulkUpdateItems = async (req, res) => {
       });
     }
 
+    // Validate all item IDs
+    const validItemIds = [];
+    for (const itemId of itemIds) {
+      if (!isValidObjectId(itemId)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid item ID format in bulk operation'
+        });
+      }
+      validItemIds.push(new mongoose.Types.ObjectId(itemId));
+    }
+
+    // Validate action
+    const allowedActions = ['delete', 'updateStatus', 'updateCategory'];
+    if (!allowedActions.includes(action)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid bulk action'
+      });
+    }
+
     let result;
     const baseUpdateData = {
-      updatedBy: req.user.id,
+      updatedBy: new mongoose.Types.ObjectId(req.user.id),
       updatedAt: new Date()
     };
 
     switch (action) {
       case 'delete':
-        result = await Item.deleteMany({ _id: { $in: itemIds } });
+        result = await Item.deleteMany({ _id: { $in: validItemIds } });
         return res.status(200).json({
           success: true,
           message: `${result.deletedCount} items deleted successfully`,
@@ -298,36 +464,47 @@ exports.bulkUpdateItems = async (req, res) => {
         });
 
       case 'updateStatus':
-        if (!updateData.status) {
+        if (!updateData || !updateData.status) {
           return res.status(400).json({
             success: false,
             message: 'Status is required for status update'
           });
         }
+        
+        const allowedStatuses = ['active', 'inactive', 'draft'];
+        if (!allowedStatuses.includes(updateData.status)) {
+          return res.status(400).json({
+            success: false,
+            message: 'Invalid status value'
+          });
+        }
+        
         result = await Item.updateMany(
-          { _id: { $in: itemIds } },
+          { _id: { $in: validItemIds } },
           { ...baseUpdateData, status: updateData.status }
         );
         break;
 
       case 'updateCategory':
-        if (!updateData.category) {
+        if (!updateData || !updateData.category) {
           return res.status(400).json({
             success: false,
             message: 'Category is required for category update'
           });
         }
+        
+        if (!isValidObjectId(updateData.category)) {
+          return res.status(400).json({
+            success: false,
+            message: 'Invalid category ID'
+          });
+        }
+        
         result = await Item.updateMany(
-          { _id: { $in: itemIds } },
-          { ...baseUpdateData, category: updateData.category }
+          { _id: { $in: validItemIds } },
+          { ...baseUpdateData, category: new mongoose.Types.ObjectId(updateData.category) }
         );
         break;
-
-      default:
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid bulk action'
-        });
     }
 
     res.status(200).json({
