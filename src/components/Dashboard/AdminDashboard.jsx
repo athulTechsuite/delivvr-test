@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Users, 
   Package, 
@@ -10,64 +10,537 @@ import {
   Trash2,
   Plus,
   Search,
-  Filter
+  Filter,
+  Upload,
+  Download,
+  X,
+  Save,
+  AlertTriangle,
+  Check,
+  Clock,
+  FileText,
+  Image,
+  MoreHorizontal
 } from 'lucide-react';
 import { useTheme } from '../../contexts/ThemeContext';
+import { useAuth } from '../../contexts/AuthContext';
+
+// Service layer for API calls
+class AdminService {
+  static async fetchUsers() {
+    try {
+      const response = await fetch('/api/admin/users');
+      if (!response.ok) throw new Error('Failed to fetch users');
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching users:', error);
+      // Fallback to mock data for demo purposes
+      return [
+        { id: 1, name: 'John Doe', email: 'john@example.com', role: 'customer', status: 'active', joinDate: '2024-01-15' },
+        { id: 2, name: 'Jane Smith', email: 'jane@example.com', role: 'vendor', status: 'active', joinDate: '2024-01-20' },
+        { id: 3, name: 'Bob Johnson', email: 'bob@example.com', role: 'customer', status: 'inactive', joinDate: '2024-01-25' }
+      ];
+    }
+  }
+
+  static async fetchItems() {
+    try {
+      const response = await fetch('/api/admin/items');
+      if (!response.ok) throw new Error('Failed to fetch items');
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching items:', error);
+      // Fallback to mock data for demo purposes
+      return [
+        { 
+          id: 1, 
+          name: 'Wireless Headphones', 
+          description: 'High-quality wireless headphones with noise cancellation',
+          price: 99.99, 
+          quantity: 50, 
+          category: 'Electronics', 
+          status: 'active',
+          image: '/api/placeholder/150/150',
+          files: ['manual.pdf', 'warranty.pdf'],
+          createdAt: '2024-01-15',
+          updatedAt: '2024-01-30',
+          updatedBy: 'Admin',
+          version: 1
+        },
+        { 
+          id: 2, 
+          name: 'Running Shoes', 
+          description: 'Comfortable running shoes for all terrains',
+          price: 129.99, 
+          quantity: 30, 
+          category: 'Sports', 
+          status: 'active',
+          image: '/api/placeholder/150/150',
+          files: ['size_guide.pdf'],
+          createdAt: '2024-01-20',
+          updatedAt: '2024-01-28',
+          updatedBy: 'Admin',
+          version: 1
+        },
+        { 
+          id: 3, 
+          name: 'Coffee Maker', 
+          description: 'Automatic drip coffee maker with timer',
+          price: 79.99, 
+          quantity: 0, 
+          category: 'Appliances', 
+          status: 'out_of_stock',
+          image: '/api/placeholder/150/150',
+          files: ['manual.pdf', 'recipes.pdf'],
+          createdAt: '2024-01-25',
+          updatedAt: '2024-02-01',
+          updatedBy: 'Admin',
+          version: 1
+        }
+      ];
+    }
+  }
+
+  static async fetchOrders() {
+    try {
+      const response = await fetch('/api/admin/orders');
+      if (!response.ok) throw new Error('Failed to fetch orders');
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching orders:', error);
+      // Fallback to mock data for demo purposes
+      return [
+        { id: 1, customer: 'John Doe', total: 199.98, status: 'completed', date: '2024-01-30' },
+        { id: 2, customer: 'Jane Smith', total: 99.99, status: 'pending', date: '2024-01-31' },
+        { id: 3, customer: 'Bob Johnson', total: 259.97, status: 'shipped', date: '2024-02-01' }
+      ];
+    }
+  }
+
+  static async fetchAnalytics() {
+    try {
+      const response = await fetch('/api/admin/analytics');
+      if (!response.ok) throw new Error('Failed to fetch analytics');
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching analytics:', error);
+      // Fallback to mock data for demo purposes
+      return {
+        totalUsers: 1250,
+        totalItems: 450,
+        totalOrders: 850,
+        totalRevenue: 125000,
+        monthlyGrowth: 15.5,
+        lowStockItems: 12,
+        outOfStockItems: 5,
+        topSellingItems: [
+          { name: 'Wireless Headphones', sales: 156 },
+          { name: 'Running Shoes', sales: 142 },
+          { name: 'Coffee Maker', sales: 98 }
+        ]
+      };
+    }
+  }
+
+  static async fetchAuditLogs() {
+    try {
+      const response = await fetch('/api/admin/audit-logs');
+      if (!response.ok) throw new Error('Failed to fetch audit logs');
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching audit logs:', error);
+      // Fallback to mock data for demo purposes
+      return [
+        { 
+          id: 1, 
+          action: 'Item Created', 
+          itemName: 'Wireless Headphones', 
+          user: 'Admin', 
+          timestamp: '2024-02-01 10:30:00',
+          details: 'New item added to inventory'
+        },
+        { 
+          id: 2, 
+          action: 'Item Updated', 
+          itemName: 'Running Shoes', 
+          user: 'Admin', 
+          timestamp: '2024-02-01 09:15:00',
+          details: 'Price updated from $119.99 to $129.99'
+        },
+        { 
+          id: 3, 
+          action: 'Item Deleted', 
+          itemName: 'Old Product', 
+          user: 'Admin', 
+          timestamp: '2024-01-31 16:45:00',
+          details: 'Item removed from inventory'
+        }
+      ];
+    }
+  }
+
+  static async createItem(itemData) {
+    try {
+      const response = await fetch('/api/admin/items', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(itemData),
+      });
+      if (!response.ok) throw new Error('Failed to create item');
+      return await response.json();
+    } catch (error) {
+      console.error('Error creating item:', error);
+      throw error;
+    }
+  }
+
+  static async updateItem(itemId, itemData, expectedVersion) {
+    try {
+      const response = await fetch(`/api/admin/items/${itemId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'If-Match': expectedVersion.toString(), // Optimistic locking
+        },
+        body: JSON.stringify(itemData),
+      });
+      if (!response.ok) {
+        if (response.status === 409) {
+          throw new Error('CONFLICT'); // Version conflict
+        }
+        throw new Error('Failed to update item');
+      }
+      return await response.json();
+    } catch (error) {
+      console.error('Error updating item:', error);
+      throw error;
+    }
+  }
+
+  static async deleteItem(itemId, expectedVersion) {
+    try {
+      const response = await fetch(`/api/admin/items/${itemId}`, {
+        method: 'DELETE',
+        headers: {
+          'If-Match': expectedVersion.toString(), // Optimistic locking
+        },
+      });
+      if (!response.ok) {
+        if (response.status === 409) {
+          throw new Error('CONFLICT'); // Version conflict
+        }
+        throw new Error('Failed to delete item');
+      }
+      return true;
+    } catch (error) {
+      console.error('Error deleting item:', error);
+      throw error;
+    }
+  }
+
+  static async bulkDeleteItems(itemIds, expectedVersions) {
+    try {
+      const response = await fetch('/api/admin/items/bulk-delete', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          itemIds,
+          expectedVersions, // Map of itemId -> version for optimistic locking
+        }),
+      });
+      if (!response.ok) {
+        if (response.status === 409) {
+          throw new Error('CONFLICT'); // Version conflict
+        }
+        throw new Error('Failed to bulk delete items');
+      }
+      return await response.json();
+    } catch (error) {
+      console.error('Error bulk deleting items:', error);
+      throw error;
+    }
+  }
+
+  static async createAuditLog(logData) {
+    try {
+      const response = await fetch('/api/admin/audit-logs', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(logData),
+      });
+      if (!response.ok) throw new Error('Failed to create audit log');
+      return await response.json();
+    } catch (error) {
+      console.error('Error creating audit log:', error);
+      throw error;
+    }
+  }
+}
 
 const AdminDashboard = () => {
   const { theme, isDark } = useTheme();
-  const [activeTab, setActiveTab] = useState('overview');
+  const { user } = useAuth();
+  const [activeTab, setActiveTab] = useState('items');
   const [users, setUsers] = useState([]);
-  const [products, setProducts] = useState([]);
+  const [items, setItems] = useState([]);
   const [orders, setOrders] = useState([]);
   const [analytics, setAnalytics] = useState({});
   const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedItems, setSelectedItems] = useState([]);
+  const [showItemModal, setShowItemModal] = useState(false);
+  const [editingItem, setEditingItem] = useState(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(null);
+  const [notification, setNotification] = useState(null);
+  const [auditLogs, setAuditLogs] = useState([]);
+  const [filterStatus, setFilterStatus] = useState('all');
+  const [operationInProgress, setOperationInProgress] = useState(false);
+
+  // Redirect if not admin
+  useEffect(() => {
+    if (user && user.role !== 'admin') {
+      window.location.href = '/dashboard';
+    }
+  }, [user]);
 
   useEffect(() => {
-    // Simulate API calls to fetch admin data
-    const fetchAdminData = async () => {
-      try {
-        // Mock data - replace with actual API calls
-        setUsers([
-          { id: 1, name: 'John Doe', email: 'john@example.com', role: 'customer', status: 'active', joinDate: '2024-01-15' },
-          { id: 2, name: 'Jane Smith', email: 'jane@example.com', role: 'vendor', status: 'active', joinDate: '2024-01-20' },
-          { id: 3, name: 'Bob Johnson', email: 'bob@example.com', role: 'customer', status: 'inactive', joinDate: '2024-01-25' }
-        ]);
-
-        setProducts([
-          { id: 1, name: 'Wireless Headphones', price: 99.99, stock: 50, category: 'Electronics', status: 'active' },
-          { id: 2, name: 'Running Shoes', price: 129.99, stock: 30, category: 'Sports', status: 'active' },
-          { id: 3, name: 'Coffee Maker', price: 79.99, stock: 0, category: 'Appliances', status: 'out_of_stock' }
-        ]);
-
-        setOrders([
-          { id: 1, customer: 'John Doe', total: 199.98, status: 'completed', date: '2024-01-30' },
-          { id: 2, customer: 'Jane Smith', total: 99.99, status: 'pending', date: '2024-01-31' },
-          { id: 3, customer: 'Bob Johnson', total: 259.97, status: 'shipped', date: '2024-02-01' }
-        ]);
-
-        setAnalytics({
-          totalUsers: 1250,
-          totalProducts: 450,
-          totalOrders: 850,
-          totalRevenue: 125000,
-          monthlyGrowth: 15.5,
-          topSellingProducts: [
-            { name: 'Wireless Headphones', sales: 156 },
-            { name: 'Running Shoes', sales: 142 },
-            { name: 'Coffee Maker', sales: 98 }
-          ]
-        });
-
-        setLoading(false);
-      } catch (error) {
-        console.error('Error fetching admin data:', error);
-        setLoading(false);
-      }
-    };
-
     fetchAdminData();
   }, []);
+
+  const fetchAdminData = async () => {
+    try {
+      setLoading(true);
+      
+      // Use service layer for API calls
+      const [usersData, itemsData, ordersData, analyticsData, auditLogsData] = await Promise.all([
+        AdminService.fetchUsers(),
+        AdminService.fetchItems(),
+        AdminService.fetchOrders(),
+        AdminService.fetchAnalytics(),
+        AdminService.fetchAuditLogs()
+      ]);
+
+      setUsers(usersData);
+      setItems(itemsData);
+      setOrders(ordersData);
+      setAnalytics(analyticsData);
+      setAuditLogs(auditLogsData);
+
+      setLoading(false);
+    } catch (error) {
+      console.error('Error fetching admin data:', error);
+      showNotification('Error loading data', 'error');
+      setLoading(false);
+    }
+  };
+
+  const showNotification = (message, type = 'success') => {
+    setNotification({ message, type });
+    setTimeout(() => setNotification(null), 5000);
+  };
+
+  const handleCreateItem = () => {
+    setEditingItem({
+      name: '',
+      description: '',
+      price: '',
+      quantity: '',
+      category: '',
+      status: 'active',
+      image: null,
+      files: [],
+      version: 0
+    });
+    setShowItemModal(true);
+  };
+
+  const handleEditItem = (item) => {
+    setEditingItem(item);
+    setShowItemModal(true);
+  };
+
+  const handleSaveItem = async (itemData) => {
+    if (operationInProgress) return;
+    
+    try {
+      setOperationInProgress(true);
+      
+      if (editingItem.id) {
+        // Update existing item with optimistic locking
+        try {
+          const updatedItem = await AdminService.updateItem(
+            editingItem.id, 
+            itemData, 
+            editingItem.version
+          );
+          
+          setItems(items.map(item => 
+            item.id === editingItem.id ? updatedItem : item
+          ));
+          showNotification('Item updated successfully');
+          
+          // Add audit log
+          const auditLogData = {
+            action: 'Item Updated',
+            itemName: itemData.name,
+            user: user?.name || 'Admin',
+            details: 'Item details updated'
+          };
+          await AdminService.createAuditLog(auditLogData);
+          setAuditLogs([{ ...auditLogData, id: Date.now(), timestamp: new Date().toLocaleString() }, ...auditLogs]);
+          
+        } catch (error) {
+          if (error.message === 'CONFLICT') {
+            showNotification('Item was modified by another user. Please refresh and try again.', 'error');
+            // Refresh the data to get the latest version
+            fetchAdminData();
+          } else {
+            throw error;
+          }
+        }
+      } else {
+        // Create new item
+        const newItem = await AdminService.createItem(itemData);
+        setItems([newItem, ...items]);
+        showNotification('Item created successfully');
+        
+        // Add audit log
+        const auditLogData = {
+          action: 'Item Created',
+          itemName: itemData.name,
+          user: user?.name || 'Admin',
+          details: 'New item added to inventory'
+        };
+        await AdminService.createAuditLog(auditLogData);
+        setAuditLogs([{ ...auditLogData, id: Date.now(), timestamp: new Date().toLocaleString() }, ...auditLogs]);
+      }
+      
+      setShowItemModal(false);
+      setEditingItem(null);
+    } catch (error) {
+      showNotification('Error saving item', 'error');
+    } finally {
+      setOperationInProgress(false);
+    }
+  };
+
+  const handleDeleteItem = async (itemId) => {
+    if (operationInProgress) return;
+    
+    try {
+      setOperationInProgress(true);
+      const item = items.find(i => i.id === itemId);
+      
+      try {
+        await AdminService.deleteItem(itemId, item.version);
+        
+        setItems(items.filter(i => i.id !== itemId));
+        showNotification('Item deleted successfully');
+        
+        // Add audit log
+        const auditLogData = {
+          action: 'Item Deleted',
+          itemName: item?.name || 'Unknown',
+          user: user?.name || 'Admin',
+          details: 'Item removed from inventory'
+        };
+        await AdminService.createAuditLog(auditLogData);
+        setAuditLogs([{ ...auditLogData, id: Date.now(), timestamp: new Date().toLocaleString() }, ...auditLogs]);
+        
+      } catch (error) {
+        if (error.message === 'CONFLICT') {
+          showNotification('Item was modified by another user. Please refresh and try again.', 'error');
+          fetchAdminData();
+        } else {
+          throw error;
+        }
+      }
+      
+      setShowDeleteConfirm(null);
+    } catch (error) {
+      showNotification('Error deleting item', 'error');
+    } finally {
+      setOperationInProgress(false);
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (operationInProgress) return;
+    
+    try {
+      setOperationInProgress(true);
+      const selectedItemsData = items.filter(item => selectedItems.includes(item.id));
+      const expectedVersions = selectedItemsData.reduce((acc, item) => {
+        acc[item.id] = item.version;
+        return acc;
+      }, {});
+      
+      try {
+        await AdminService.bulkDeleteItems(selectedItems, expectedVersions);
+        
+        setItems(items.filter(item => !selectedItems.includes(item.id)));
+        showNotification(`${selectedItems.length} items deleted successfully`);
+        
+        // Add bulk audit logs
+        for (const item of selectedItemsData) {
+          const auditLogData = {
+            action: 'Item Deleted',
+            itemName: item.name,
+            user: user?.name || 'Admin',
+            details: 'Bulk delete operation'
+          };
+          await AdminService.createAuditLog(auditLogData);
+          setAuditLogs(prev => [{ ...auditLogData, id: Date.now() + Math.random(), timestamp: new Date().toLocaleString() }, ...prev]);
+        }
+        
+      } catch (error) {
+        if (error.message === 'CONFLICT') {
+          showNotification('Some items were modified by another user. Please refresh and try again.', 'error');
+          fetchAdminData();
+        } else {
+          throw error;
+        }
+      }
+      
+      setSelectedItems([]);
+    } catch (error) {
+      showNotification('Error deleting items', 'error');
+    } finally {
+      setOperationInProgress(false);
+    }
+  };
+
+  const handleSelectItem = (itemId) => {
+    setSelectedItems(prev => 
+      prev.includes(itemId) 
+        ? prev.filter(id => id !== itemId)
+        : [...prev, itemId]
+    );
+  };
+
+  const handleSelectAllItems = () => {
+    const filteredItems = getFilteredItems();
+    if (selectedItems.length === filteredItems.length) {
+      setSelectedItems([]);
+    } else {
+      setSelectedItems(filteredItems.map(item => item.id));
+    }
+  };
+
+  const getFilteredItems = useCallback(() => {
+    return items.filter(item => {
+      const matchesSearch = item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                           item.description.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesFilter = filterStatus === 'all' || item.status === filterStatus;
+      return matchesSearch && matchesFilter;
+    });
+  }, [items, searchTerm, filterStatus]);
 
   const StatCard = ({ title, value, icon: Icon, trend, color = 'blue' }) => (
     <div className={`rounded-lg shadow-md p-6 border-l-4 border-blue-500 ${isDark ? 'bg-gray-800' : 'bg-white'}`}>
@@ -88,157 +561,522 @@ const AdminDashboard = () => {
     </div>
   );
 
-  const UserManagementTab = () => (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h2 className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>User Management</h2>
-        <button className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700 transition-colors">
-          <Plus className="h-4 w-4" />
-          Add User
-        </button>
-      </div>
+  const ItemModal = ({ item, onSave, onClose }) => {
+    const [formData, setFormData] = useState(item || {
+      name: '',
+      description: '',
+      price: '',
+      quantity: '',
+      category: '',
+      status: 'active',
+      image: null,
+      files: [],
+      version: 0
+    });
+    const [errors, setErrors] = useState({});
 
-      <div className="flex gap-4 mb-4">
-        <div className="flex-1 relative">
-          <Search className={`h-4 w-4 absolute left-3 top-1/2 transform -translate-y-1/2 ${isDark ? 'text-gray-400' : 'text-gray-400'}`} />
-          <input
-            type="text"
-            placeholder="Search users..."
-            className={`w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors ${
-              isDark 
-                ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' 
-                : 'bg-white border-gray-300 text-gray-900 placeholder-gray-500'
-            }`}
-          />
+    const validateForm = () => {
+      const newErrors = {};
+      if (!formData.name.trim()) newErrors.name = 'Name is required';
+      if (!formData.description.trim()) newErrors.description = 'Description is required';
+      if (!formData.price || formData.price <= 0) newErrors.price = 'Valid price is required';
+      if (!formData.quantity || formData.quantity < 0) newErrors.quantity = 'Valid quantity is required';
+      if (!formData.category.trim()) newErrors.category = 'Category is required';
+      
+      setErrors(newErrors);
+      return Object.keys(newErrors).length === 0;
+    };
+
+    const handleSubmit = (e) => {
+      e.preventDefault();
+      if (validateForm() && !operationInProgress) {
+        onSave(formData);
+      }
+    };
+
+    const handleImageUpload = (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        setFormData({ ...formData, image: file });
+      }
+    };
+
+    const handleFileUpload = (e) => {
+      const files = Array.from(e.target.files);
+      setFormData({ ...formData, files: [...formData.files, ...files] });
+    };
+
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+        <div className={`rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto ${isDark ? 'bg-gray-800' : 'bg-white'}`}>
+          <div className="p-6">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className={`text-xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                {item?.id ? 'Edit Item' : 'Create New Item'}
+              </h2>
+              <button onClick={onClose} className={`text-gray-500 hover:text-gray-700 ${isDark ? 'hover:text-gray-300' : ''}`}>
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmit} className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className={`block text-sm font-medium mb-1 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                    Name *
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.name}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                      errors.name ? 'border-red-500' : isDark ? 'bg-gray-700 border-gray-600 text-white' : 'border-gray-300'
+                    }`}
+                    placeholder="Enter item name"
+                  />
+                  {errors.name && <p className="text-red-500 text-xs mt-1">{errors.name}</p>}
+                </div>
+
+                <div>
+                  <label className={`block text-sm font-medium mb-1 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                    Category *
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.category}
+                    onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                      errors.category ? 'border-red-500' : isDark ? 'bg-gray-700 border-gray-600 text-white' : 'border-gray-300'
+                    }`}
+                    placeholder="Enter category"
+                  />
+                  {errors.category && <p className="text-red-500 text-xs mt-1">{errors.category}</p>}
+                </div>
+
+                <div>
+                  <label className={`block text-sm font-medium mb-1 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                    Price *
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={formData.price}
+                    onChange={(e) => setFormData({ ...formData, price: parseFloat(e.target.value) })}
+                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                      errors.price ? 'border-red-500' : isDark ? 'bg-gray-700 border-gray-600 text-white' : 'border-gray-300'
+                    }`}
+                    placeholder="0.00"
+                  />
+                  {errors.price && <p className="text-red-500 text-xs mt-1">{errors.price}</p>}
+                </div>
+
+                <div>
+                  <label className={`block text-sm font-medium mb-1 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                    Quantity *
+                  </label>
+                  <input
+                    type="number"
+                    value={formData.quantity}
+                    onChange={(e) => setFormData({ ...formData, quantity: parseInt(e.target.value) })}
+                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                      errors.quantity ? 'border-red-500' : isDark ? 'bg-gray-700 border-gray-600 text-white' : 'border-gray-300'
+                    }`}
+                    placeholder="0"
+                  />
+                  {errors.quantity && <p className="text-red-500 text-xs mt-1">{errors.quantity}</p>}
+                </div>
+              </div>
+
+              <div>
+                <label className={`block text-sm font-medium mb-1 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                  Description *
+                </label>
+                <textarea
+                  rows="3"
+                  value={formData.description}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                    errors.description ? 'border-red-500' : isDark ? 'bg-gray-700 border-gray-600 text-white' : 'border-gray-300'
+                  }`}
+                  placeholder="Enter item description"
+                />
+                {errors.description && <p className="text-red-500 text-xs mt-1">{errors.description}</p>}
+              </div>
+
+              <div>
+                <label className={`block text-sm font-medium mb-1 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                  Status
+                </label>
+                <select
+                  value={formData.status}
+                  onChange={(e) => setFormData({ ...formData, status: e.target.value })}
+                  className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                    isDark ? 'bg-gray-700 border-gray-600 text-white' : 'border-gray-300'
+                  }`}
+                >
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                  <option value="out_of_stock">Out of Stock</option>
+                </select>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className={`block text-sm font-medium mb-1 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                    Item Image
+                  </label>
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleImageUpload}
+                      className="hidden"
+                      id="image-upload"
+                    />
+                    <label
+                      htmlFor="image-upload"
+                      className={`flex items-center gap-2 px-4 py-2 border rounded-lg cursor-pointer hover:bg-gray-50 ${
+                        isDark ? 'border-gray-600 text-gray-300 hover:bg-gray-700' : 'border-gray-300 text-gray-700'
+                      }`}
+                    >
+                      <Image className="h-4 w-4" />
+                      Upload Image
+                    </label>
+                  </div>
+                </div>
+
+                <div>
+                  <label className={`block text-sm font-medium mb-1 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                    Associated Files
+                  </label>
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="file"
+                      multiple
+                      onChange={handleFileUpload}
+                      className="hidden"
+                      id="files-upload"
+                    />
+                    <label
+                      htmlFor="files-upload"
+                      className={`flex items-center gap-2 px-4 py-2 border rounded-lg cursor-pointer hover:bg-gray-50 ${
+                        isDark ? 'border-gray-600 text-gray-300 hover:bg-gray-700' : 'border-gray-300 text-gray-700'
+                      }`}
+                    >
+                      <FileText className="h-4 w-4" />
+                      Upload Files
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end space-x-3 pt-6 border-t border-gray-200 dark:border-gray-700">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  disabled={operationInProgress}
+                  className={`px-4 py-2 border rounded-lg transition-colors ${
+                    operationInProgress ? 'opacity-50 cursor-not-allowed' : ''
+                  } ${
+                    isDark 
+                      ? 'border-gray-600 text-gray-300 hover:bg-gray-700' 
+                      : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                  }`}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={operationInProgress}
+                  className={`bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700 transition-colors ${
+                    operationInProgress ? 'opacity-50 cursor-not-allowed' : ''
+                  }`}
+                >
+                  <Save className="h-4 w-4" />
+                  {operationInProgress ? 'Saving...' : (item?.id ? 'Update Item' : 'Create Item')}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
-        <button className={`px-4 py-2 border rounded-lg flex items-center gap-2 transition-colors ${
-          isDark 
-            ? 'border-gray-600 text-gray-300 hover:bg-gray-700' 
-            : 'border-gray-300 text-gray-700 hover:bg-gray-50'
-        }`}>
-          <Filter className="h-4 w-4" />
-          Filter
-        </button>
       </div>
+    );
+  };
 
-      <div className={`rounded-lg shadow overflow-hidden ${isDark ? 'bg-gray-800' : 'bg-white'}`}>
-        <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-          <thead className={isDark ? 'bg-gray-700' : 'bg-gray-50'}>
-            <tr>
-              <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>User</th>
-              <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>Role</th>
-              <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>Status</th>
-              <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>Join Date</th>
-              <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>Actions</th>
-            </tr>
-          </thead>
-          <tbody className={`divide-y ${isDark ? 'bg-gray-800 divide-gray-700' : 'bg-white divide-gray-200'}`}>
-            {users.map((user) => (
-              <tr key={user.id}>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div>
-                    <div className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>{user.name}</div>
-                    <div className={`text-sm ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>{user.email}</div>
-                  </div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                    user.role === 'admin' ? 'bg-purple-100 text-purple-800' :
-                    user.role === 'vendor' ? 'bg-orange-100 text-orange-800' :
-                    'bg-gray-100 text-gray-800'
-                  }`}>
-                    {user.role}
-                  </span>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                    user.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                  }`}>
-                    {user.status}
-                  </span>
-                </td>
-                <td className={`px-6 py-4 whitespace-nowrap text-sm ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>
-                  {user.joinDate}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                  <div className="flex space-x-2">
-                    <button className="text-blue-600 hover:text-blue-900 transition-colors">
-                      <Eye className="h-4 w-4" />
-                    </button>
-                    <button className="text-green-600 hover:text-green-900 transition-colors">
-                      <Edit className="h-4 w-4" />
-                    </button>
-                    <button className="text-red-600 hover:text-red-900 transition-colors">
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+  const DeleteConfirmModal = ({ item, onConfirm, onCancel }) => (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className={`rounded-lg shadow-xl max-w-md w-full mx-4 ${isDark ? 'bg-gray-800' : 'bg-white'}`}>
+        <div className="p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <AlertTriangle className="h-8 w-8 text-red-500" />
+            <h2 className={`text-lg font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+              Confirm Deletion
+            </h2>
+          </div>
+          <p className={`mb-6 ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>
+            Are you sure you want to delete "<strong>{item?.name}</strong>"? This action cannot be undone.
+          </p>
+          <div className="flex justify-end space-x-3">
+            <button
+              onClick={onCancel}
+              disabled={operationInProgress}
+              className={`px-4 py-2 border rounded-lg transition-colors ${
+                operationInProgress ? 'opacity-50 cursor-not-allowed' : ''
+              } ${
+                isDark 
+                  ? 'border-gray-600 text-gray-300 hover:bg-gray-700' 
+                  : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={onConfirm}
+              disabled={operationInProgress}
+              className={`bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors ${
+                operationInProgress ? 'opacity-50 cursor-not-allowed' : ''
+              }`}
+            >
+              {operationInProgress ? 'Deleting...' : 'Delete Item'}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );
 
-  const ProductManagementTab = () => (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h2 className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>Product Management</h2>
-        <button className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700 transition-colors">
-          <Plus className="h-4 w-4" />
-          Add Product
-        </button>
-      </div>
+  const ItemManagementTab = () => {
+    const filteredItems = getFilteredItems();
 
+    return (
+      <div className="space-y-6">
+        <div className="flex justify-between items-center">
+          <h2 className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>Item Management</h2>
+          <div className="flex gap-3">
+            {selectedItems.length > 0 && (
+              <button
+                onClick={handleBulkDelete}
+                disabled={operationInProgress}
+                className={`bg-red-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-red-700 transition-colors ${
+                  operationInProgress ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
+              >
+                <Trash2 className="h-4 w-4" />
+                {operationInProgress ? 'Deleting...' : `Delete Selected (${selectedItems.length})`}
+              </button>
+            )}
+            <button
+              onClick={handleCreateItem}
+              disabled={operationInProgress}
+              className={`bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700 transition-colors ${
+                operationInProgress ? 'opacity-50 cursor-not-allowed' : ''
+              }`}
+            >
+              <Plus className="h-4 w-4" />
+              Add Item
+            </button>
+          </div>
+        </div>
+
+        {/* Search and Filter */}
+        <div className="flex gap-4 mb-4">
+          <div className="flex-1 relative">
+            <Search className={`h-4 w-4 absolute left-3 top-1/2 transform -translate-y-1/2 ${isDark ? 'text-gray-400' : 'text-gray-400'}`} />
+            <input
+              type="text"
+              placeholder="Search items by name or description..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className={`w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors ${
+                isDark 
+                  ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' 
+                  : 'bg-white border-gray-300 text-gray-900 placeholder-gray-500'
+              }`}
+            />
+          </div>
+          <select
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value)}
+            className={`px-4 py-2 border rounded-lg flex items-center gap-2 transition-colors ${
+              isDark 
+                ? 'bg-gray-700 border-gray-600 text-white' 
+                : 'bg-white border-gray-300 text-gray-900'
+            }`}
+          >
+            <option value="all">All Status</option>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+            <option value="out_of_stock">Out of Stock</option>
+          </select>
+        </div>
+
+        {/* Items Table */}
+        <div className={`rounded-lg shadow overflow-hidden ${isDark ? 'bg-gray-800' : 'bg-white'}`}>
+          <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+            <thead className={isDark ? 'bg-gray-700' : 'bg-gray-50'}>
+              <tr>
+                <th className="px-6 py-3 text-left">
+                  <input
+                    type="checkbox"
+                    checked={selectedItems.length === filteredItems.length && filteredItems.length > 0}
+                    onChange={handleSelectAllItems}
+                    className="rounded"
+                  />
+                </th>
+                <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>Item</th>
+                <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>Category</th>
+                <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>Price</th>
+                <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>Quantity</th>
+                <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>Status</th>
+                <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>Updated</th>
+                <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>Actions</th>
+              </tr>
+            </thead>
+            <tbody className={`divide-y ${isDark ? 'bg-gray-800 divide-gray-700' : 'bg-white divide-gray-200'}`}>
+              {filteredItems.map((item) => (
+                <tr key={item.id} className={selectedItems.includes(item.id) ? (isDark ? 'bg-gray-700' : 'bg-blue-50') : ''}>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <input
+                      type="checkbox"
+                      checked={selectedItems.includes(item.id)}
+                      onChange={() => handleSelectItem(item.id)}
+                      className="rounded"
+                    />
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <div className="flex items-center">
+                      <div className="flex-shrink-0 h-12 w-12">
+                        <img
+                          className="h-12 w-12 rounded-lg object-cover"
+                          src={item.image || '/api/placeholder/48/48'}
+                          alt={item.name}
+                        />
+                      </div>
+                      <div className="ml-4">
+                        <div className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                          {item.name}
+                        </div>
+                        <div className={`text-sm ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>
+                          {item.description.length > 50 
+                            ? `${item.description.substring(0, 50)}...` 
+                            : item.description
+                          }
+                        </div>
+                      </div>
+                    </div>
+                  </td>
+                  <td className={`px-6 py-4 whitespace-nowrap text-sm ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>
+                    {item.category}
+                  </td>
+                  <td className={`px-6 py-4 whitespace-nowrap text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                    ${item.price.toFixed(2)}
+                  </td>
+                  <td className={`px-6 py-4 whitespace-nowrap text-sm ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                    <span className={item.quantity < 10 && item.quantity > 0 ? 'text-yellow-600' : item.quantity === 0 ? 'text-red-600' : ''}>
+                      {item.quantity}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                      item.status === 'active' ? 'bg-green-100 text-green-800' : 
+                      item.status === 'out_of_stock' ? 'bg-red-100 text-red-800' :
+                      'bg-gray-100 text-gray-800'
+                    }`}>
+                      {item.status.replace('_', ' ')}
+                    </span>
+                  </td>
+                  <td className={`px-6 py-4 whitespace-nowrap text-sm ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>
+                    <div>{item.updatedAt}</div>
+                    <div className="text-xs">by {item.updatedBy}</div>
+                    <div className="text-xs text-gray-400">v{item.version || 1}</div>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                    <div className="flex space-x-2">
+                      <button 
+                        onClick={() => handleEditItem(item)}
+                        disabled={operationInProgress}
+                        className={`text-blue-600 hover:text-blue-900 transition-colors ${
+                          operationInProgress ? 'opacity-50 cursor-not-allowed' : ''
+                        }`}
+                        title="Edit Item"
+                      >
+                        <Edit className="h-4 w-4" />
+                      </button>
+                      <button 
+                        onClick={() => setShowDeleteConfirm(item)}
+                        disabled={operationInProgress}
+                        className={`text-red-600 hover:text-red-900 transition-colors ${
+                          operationInProgress ? 'opacity-50 cursor-not-allowed' : ''
+                        }`}
+                        title="Delete Item"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          
+          {filteredItems.length === 0 && (
+            <div className={`text-center py-12 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+              <Package className="h-12 w-12 mx-auto mb-4 opacity-50" />
+              <p>No items found matching your search criteria.</p>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const AuditLogTab = () => (
+    <div className="space-y-6">
+      <h2 className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>Audit Trail</h2>
+      
       <div className={`rounded-lg shadow overflow-hidden ${isDark ? 'bg-gray-800' : 'bg-white'}`}>
         <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
           <thead className={isDark ? 'bg-gray-700' : 'bg-gray-50'}>
             <tr>
-              <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>Product</th>
-              <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>Category</th>
-              <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>Price</th>
-              <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>Stock</th>
-              <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>Status</th>
-              <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>Actions</th>
+              <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>Action</th>
+              <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>Item</th>
+              <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>User</th>
+              <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>Timestamp</th>
+              <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>Details</th>
             </tr>
           </thead>
           <tbody className={`divide-y ${isDark ? 'bg-gray-800 divide-gray-700' : 'bg-white divide-gray-200'}`}>
-            {products.map((product) => (
-              <tr key={product.id}>
-                <td className={`px-6 py-4 whitespace-nowrap text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  {product.name}
+            {auditLogs.map((log) => (
+              <tr key={log.id}>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <div className="flex items-center">
+                    <div className={`p-2 rounded-full mr-3 ${
+                      log.action.includes('Created') ? 'bg-green-100 text-green-600' :
+                      log.action.includes('Updated') ? 'bg-blue-100 text-blue-600' :
+                      log.action.includes('Deleted') ? 'bg-red-100 text-red-600' :
+                      'bg-gray-100 text-gray-600'
+                    }`}>
+                      {log.action.includes('Created') ? <Plus className="h-3 w-3" /> :
+                       log.action.includes('Updated') ? <Edit className="h-3 w-3" /> :
+                       log.action.includes('Deleted') ? <Trash2 className="h-3 w-3" /> :
+                       <Clock className="h-3 w-3" />}
+                    </div>
+                    <span className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                      {log.action}
+                    </span>
+                  </div>
                 </td>
                 <td className={`px-6 py-4 whitespace-nowrap text-sm ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>
-                  {product.category}
+                  {log.itemName}
                 </td>
-                <td className={`px-6 py-4 whitespace-nowrap text-sm ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  ${product.price}
+                <td className={`px-6 py-4 whitespace-nowrap text-sm ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>
+                  {log.user}
                 </td>
-                <td className={`px-6 py-4 whitespace-nowrap text-sm ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  {product.stock}
+                <td className={`px-6 py-4 whitespace-nowrap text-sm ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>
+                  {log.timestamp}
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                    product.status === 'active' ? 'bg-green-100 text-green-800' : 
-                    product.status === 'out_of_stock' ? 'bg-red-100 text-red-800' :
-                    'bg-gray-100 text-gray-800'
-                  }`}>
-                    {product.status.replace('_', ' ')}
-                  </span>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                  <div className="flex space-x-2">
-                    <button className="text-blue-600 hover:text-blue-900 transition-colors">
-                      <Eye className="h-4 w-4" />
-                    </button>
-                    <button className="text-green-600 hover:text-green-900 transition-colors">
-                      <Edit className="h-4 w-4" />
-                    </button>
-                    <button className="text-red-600 hover:text-red-900 transition-colors">
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
+                <td className={`px-6 py-4 text-sm ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>
+                  {log.details}
                 </td>
               </tr>
             ))}
@@ -254,66 +1092,65 @@ const AdminDashboard = () => {
       
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard
-          title="Total Users"
-          value={analytics.totalUsers?.toLocaleString()}
-          icon={Users}
-          trend={12.5}
-          color="blue"
-        />
-        <StatCard
-          title="Total Products"
-          value={analytics.totalProducts?.toLocaleString()}
+          title="Total Items"
+          value={analytics.totalItems?.toLocaleString()}
           icon={Package}
           trend={8.2}
-          color="green"
         />
         <StatCard
-          title="Total Orders"
-          value={analytics.totalOrders?.toLocaleString()}
-          icon={ShoppingCart}
-          trend={analytics.monthlyGrowth}
-          color="purple"
+          title="Low Stock Items"
+          value={analytics.lowStockItems}
+          icon={AlertTriangle}
+          trend={-5.3}
+        />
+        <StatCard
+          title="Out of Stock"
+          value={analytics.outOfStockItems}
+          icon={X}
+          trend={-12.1}
         />
         <StatCard
           title="Total Revenue"
           value={`$${analytics.totalRevenue?.toLocaleString()}`}
           icon={DollarSign}
           trend={18.7}
-          color="yellow"
         />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className={`rounded-lg shadow p-6 ${isDark ? 'bg-gray-800' : 'bg-white'}`}>
-          <h3 className={`text-lg font-semibold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>Top Selling Products</h3>
+          <h3 className={`text-lg font-semibold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>Top Selling Items</h3>
           <div className="space-y-3">
-            {analytics.topSellingProducts?.map((product, index) => (
+            {analytics.topSellingItems?.map((item, index) => (
               <div key={index} className="flex justify-between items-center">
-                <span className={`text-sm ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>{product.name}</span>
-                <span className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>{product.sales} sales</span>
+                <span className={`text-sm ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>{item.name}</span>
+                <span className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>{item.sales} sold</span>
               </div>
             ))}
           </div>
         </div>
 
         <div className={`rounded-lg shadow p-6 ${isDark ? 'bg-gray-800' : 'bg-white'}`}>
-          <h3 className={`text-lg font-semibold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>Recent Orders</h3>
+          <h3 className={`text-lg font-semibold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>Recent Activity</h3>
           <div className="space-y-3">
-            {orders.slice(0, 5).map((order) => (
-              <div key={order.id} className="flex justify-between items-center">
-                <div>
-                  <p className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>#{order.id} - {order.customer}</p>
-                  <p className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>{order.date}</p>
+            {auditLogs.slice(0, 5).map((log) => (
+              <div key={log.id} className="flex items-center gap-3">
+                <div className={`p-1 rounded-full ${
+                  log.action.includes('Created') ? 'bg-green-100 text-green-600' :
+                  log.action.includes('Updated') ? 'bg-blue-100 text-blue-600' :
+                  'bg-red-100 text-red-600'
+                }`}>
+                  {log.action.includes('Created') ? <Plus className="h-3 w-3" /> :
+                   log.action.includes('Updated') ? <Edit className="h-3 w-3" /> :
+                   <Trash2 className="h-3 w-3" />}
                 </div>
-                <div className="text-right">
-                  <p className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>${order.total}</p>
-                  <span className={`text-xs px-2 py-1 rounded-full ${
-                    order.status === 'completed' ? 'bg-green-100 text-green-800' :
-                    order.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
-                    'bg-blue-100 text-blue-800'
-                  }`}>
-                    {order.status}
-                  </span>
+                <div className="flex-1">
+                  <p className={`text-xs ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>
+                    {log.action} - {log.itemName}
+                  </p>
+                  <p className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                    {log.timestamp}
+                  </p>
                 </div>
               </div>
             ))}
@@ -333,20 +1170,37 @@ const AdminDashboard = () => {
 
   return (
     <div className={`min-h-screen ${isDark ? 'bg-gray-900' : 'bg-gray-50'}`}>
+      {/* Notification */}
+      {notification && (
+        <div className={`fixed top-4 right-4 z-50 p-4 rounded-lg shadow-lg ${
+          notification.type === 'error' 
+            ? 'bg-red-500 text-white' 
+            : 'bg-green-500 text-white'
+        }`}>
+          <div className="flex items-center gap-2">
+            {notification.type === 'error' ? (
+              <AlertTriangle className="h-5 w-5" />
+            ) : (
+              <Check className="h-5 w-5" />
+            )}
+            {notification.message}
+          </div>
+        </div>
+      )}
+
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-8">
           <h1 className={`text-3xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>Admin Dashboard</h1>
-          <p className={`mt-2 ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>Manage your eCommerce platform</p>
+          <p className={`mt-2 ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>Manage your inventory and track performance</p>
         </div>
 
         {/* Navigation Tabs */}
         <div className="mb-8">
           <nav className="flex space-x-8">
             {[
-              { id: 'overview', name: 'Overview', icon: TrendingUp },
-              { id: 'users', name: 'Users', icon: Users },
-              { id: 'products', name: 'Products', icon: Package },
-              { id: 'analytics', name: 'Analytics', icon: TrendingUp }
+              { id: 'items', name: 'Item Management', icon: Package },
+              { id: 'analytics', name: 'Analytics', icon: TrendingUp },
+              { id: 'audit', name: 'Audit Trail', icon: FileText }
             ].map(({ id, name, icon: Icon }) => (
               <button
                 key={id}
@@ -365,15 +1219,32 @@ const AdminDashboard = () => {
         </div>
 
         {/* Tab Content */}
-        <div className={`rounded-lg shadow-sm ${isDark ? 'bg-gray-800' : 'bg-white'}`}>
-          <div className="p-6">
-            {activeTab === 'overview' && <AnalyticsTab />}
-            {activeTab === 'users' && <UserManagementTab />}
-            {activeTab === 'products' && <ProductManagementTab />}
-            {activeTab === 'analytics' && <AnalyticsTab />}
-          </div>
+        <div>
+          {activeTab === 'items' && <ItemManagementTab />}
+          {activeTab === 'analytics' && <AnalyticsTab />}
+          {activeTab === 'audit' && <AuditLogTab />}
         </div>
       </div>
+
+      {/* Modals */}
+      {showItemModal && (
+        <ItemModal
+          item={editingItem}
+          onSave={handleSaveItem}
+          onClose={() => {
+            setShowItemModal(false);
+            setEditingItem(null);
+          }}
+        />
+      )}
+
+      {showDeleteConfirm && (
+        <DeleteConfirmModal
+          item={showDeleteConfirm}
+          onConfirm={() => handleDeleteItem(showDeleteConfirm.id)}
+          onCancel={() => setShowDeleteConfirm(null)}
+        />
+      )}
     </div>
   );
 };

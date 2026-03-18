@@ -62,6 +62,286 @@ const getProducts = async (req, res) => {
   }
 };
 
+// Admin dashboard: Get all items with comprehensive data
+const getAdminDashboard = async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const skip = (page - 1) * limit;
+    
+    // Build filter object for admin dashboard
+    const filter = {};
+    
+    // Status filter
+    if (req.query.status) {
+      if (req.query.status === 'active') {
+        filter.isActive = true;
+      } else if (req.query.status === 'inactive') {
+        filter.isActive = false;
+      }
+    }
+    
+    // Stock filter
+    if (req.query.stockLevel) {
+      switch (req.query.stockLevel) {
+        case 'outOfStock':
+          filter.stock = 0;
+          break;
+        case 'lowStock':
+          filter.stock = { $gt: 0, $lte: 10 };
+          break;
+        case 'inStock':
+          filter.stock = { $gt: 10 };
+          break;
+      }
+    }
+    
+    // Category filter
+    if (req.query.category && req.query.category !== 'all') {
+      filter.category = req.query.category;
+    }
+    
+    // Search filter
+    if (req.query.search) {
+      filter.$or = [
+        { name: { $regex: req.query.search, $options: 'i' } },
+        { description: { $regex: req.query.search, $options: 'i' } },
+        { 'vendor.name': { $regex: req.query.search, $options: 'i' } }
+      ];
+    }
+
+    // Date range filter
+    if (req.query.dateFrom || req.query.dateTo) {
+      filter.createdAt = {};
+      if (req.query.dateFrom) {
+        filter.createdAt.$gte = new Date(req.query.dateFrom);
+      }
+      if (req.query.dateTo) {
+        filter.createdAt.$lte = new Date(req.query.dateTo);
+      }
+    }
+
+    const sortOptions = {};
+    if (req.query.sortBy) {
+      switch (req.query.sortBy) {
+        case 'name':
+          sortOptions.name = req.query.sortOrder === 'desc' ? -1 : 1;
+          break;
+        case 'price':
+          sortOptions.price = req.query.sortOrder === 'desc' ? -1 : 1;
+          break;
+        case 'stock':
+          sortOptions.stock = req.query.sortOrder === 'desc' ? -1 : 1;
+          break;
+        case 'created':
+          sortOptions.createdAt = req.query.sortOrder === 'desc' ? -1 : 1;
+          break;
+        default:
+          sortOptions.createdAt = -1;
+      }
+    } else {
+      sortOptions.createdAt = -1;
+    }
+
+    const products = await Product.find(filter)
+      .populate('vendor', 'name email phone')
+      .select('name description price category stock isActive images averageRating createdAt updatedAt auditTrail')
+      .sort(sortOptions)
+      .skip(skip)
+      .limit(limit);
+
+    const total = await Product.countDocuments(filter);
+
+    // Get dashboard statistics
+    const stats = await Promise.all([
+      Product.countDocuments({ isActive: true }),
+      Product.countDocuments({ isActive: false }),
+      Product.countDocuments({ stock: 0 }),
+      Product.countDocuments({ stock: { $gt: 0, $lte: 10 } }),
+      Product.aggregate([
+        { $match: { isActive: true } },
+        { $group: { _id: null, totalValue: { $sum: { $multiply: ['$price', '$stock'] } } } }
+      ])
+    ]);
+
+    const dashboardStats = {
+      totalItems: total,
+      activeItems: stats[0],
+      inactiveItems: stats[1],
+      outOfStockItems: stats[2],
+      lowStockItems: stats[3],
+      totalInventoryValue: stats[4][0]?.totalValue || 0
+    };
+
+    res.json({
+      success: true,
+      data: {
+        items: products,
+        statistics: dashboardStats,
+        pagination: {
+          currentPage: page,
+          totalPages: Math.ceil(total / limit),
+          totalItems: total,
+          hasNext: page < Math.ceil(total / limit),
+          hasPrev: page > 1
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Get admin dashboard error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch admin dashboard data',
+      error: error.message
+    });
+  }
+};
+
+// Bulk operations for admin
+const bulkUpdateProducts = async (req, res) => {
+  try {
+    const { operation, productIds, updateData } = req.body;
+    
+    if (!operation || !productIds || !Array.isArray(productIds) || productIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid bulk operation parameters'
+      });
+    }
+
+    let updateQuery = {};
+    let successMessage = '';
+
+    switch (operation) {
+      case 'activate':
+        updateQuery = { 
+          isActive: true, 
+          updatedAt: new Date(),
+          $push: {
+            auditTrail: {
+              action: 'bulk_activate',
+              performedBy: req.user.id,
+              performedAt: new Date(),
+              changes: { isActive: true }
+            }
+          }
+        };
+        successMessage = `${productIds.length} products activated successfully`;
+        break;
+      case 'deactivate':
+        updateQuery = { 
+          isActive: false, 
+          updatedAt: new Date(),
+          $push: {
+            auditTrail: {
+              action: 'bulk_deactivate',
+              performedBy: req.user.id,
+              performedAt: new Date(),
+              changes: { isActive: false }
+            }
+          }
+        };
+        successMessage = `${productIds.length} products deactivated successfully`;
+        break;
+      case 'updateCategory':
+        if (!updateData.category) {
+          return res.status(400).json({
+            success: false,
+            message: 'Category is required for bulk category update'
+          });
+        }
+        updateQuery = { 
+          category: updateData.category, 
+          updatedAt: new Date(),
+          $push: {
+            auditTrail: {
+              action: 'bulk_category_update',
+              performedBy: req.user.id,
+              performedAt: new Date(),
+              changes: { category: updateData.category }
+            }
+          }
+        };
+        successMessage = `${productIds.length} products category updated successfully`;
+        break;
+      case 'delete':
+        updateQuery = { 
+          isActive: false, 
+          deletedAt: new Date(),
+          updatedAt: new Date(),
+          $push: {
+            auditTrail: {
+              action: 'bulk_delete',
+              performedBy: req.user.id,
+              performedAt: new Date(),
+              changes: { isActive: false, deletedAt: new Date() }
+            }
+          }
+        };
+        successMessage = `${productIds.length} products deleted successfully`;
+        break;
+      default:
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid bulk operation'
+        });
+    }
+
+    const result = await Product.updateMany(
+      { _id: { $in: productIds } },
+      updateQuery
+    );
+
+    res.json({
+      success: true,
+      message: successMessage,
+      data: {
+        modifiedCount: result.modifiedCount,
+        matchedCount: result.matchedCount
+      }
+    });
+  } catch (error) {
+    console.error('Bulk update error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to perform bulk operation',
+      error: error.message
+    });
+  }
+};
+
+// Get audit trail for a product
+const getProductAuditTrail = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const product = await Product.findById(id)
+      .select('name auditTrail')
+      .populate('auditTrail.performedBy', 'name email');
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        productName: product.name,
+        auditTrail: product.auditTrail.sort((a, b) => b.performedAt - a.performedAt)
+      }
+    });
+  } catch (error) {
+    console.error('Get audit trail error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch audit trail',
+      error: error.message
+    });
+  }
+};
+
 // Get single product by ID
 const getProductById = async (req, res) => {
   try {
@@ -141,7 +421,13 @@ const createProduct = async (req, res) => {
       specifications: specifications || {},
       tags: tags || [],
       vendor: vendorId,
-      isActive: true
+      isActive: true,
+      auditTrail: [{
+        action: 'create',
+        performedBy: req.user.id,
+        performedAt: new Date(),
+        changes: { created: true }
+      }]
     });
 
     await product.save();
@@ -200,18 +486,31 @@ const updateProduct = async (req, res) => {
     ];
     
     const updates = {};
+    const changes = {};
     allowedUpdates.forEach(field => {
       if (req.body[field] !== undefined) {
+        changes[field] = { from: product[field], to: req.body[field] };
         updates[field] = req.body[field];
       }
     });
 
     // Only admin can change vendor
     if (req.user.role === 'admin' && req.body.vendor) {
+      changes.vendor = { from: product.vendor, to: req.body.vendor };
       updates.vendor = req.body.vendor;
     }
 
     updates.updatedAt = new Date();
+    
+    // Add audit trail entry
+    updates.$push = {
+      auditTrail: {
+        action: 'update',
+        performedBy: req.user.id,
+        performedAt: new Date(),
+        changes: changes
+      }
+    };
 
     const updatedProduct = await Product.findByIdAndUpdate(
       id,
@@ -257,7 +556,17 @@ const deleteProduct = async (req, res) => {
 
     // Soft delete by setting isActive to false
     product.isActive = false;
+    product.deletedAt = new Date();
     product.updatedAt = new Date();
+    
+    // Add audit trail entry
+    product.auditTrail.push({
+      action: 'delete',
+      performedBy: req.user.id,
+      performedAt: new Date(),
+      changes: { isActive: false, deletedAt: new Date() }
+    });
+    
     await product.save();
 
     res.json({
@@ -394,6 +703,14 @@ const addReview = async (req, res) => {
     const totalRating = product.reviews.reduce((sum, review) => sum + review.rating, 0);
     product.averageRating = totalRating / product.reviews.length;
 
+    // Add audit trail entry
+    product.auditTrail.push({
+      action: 'review_added',
+      performedBy: req.user.id,
+      performedAt: new Date(),
+      changes: { rating, comment }
+    });
+
     await product.save();
 
     const updatedProduct = await Product.findById(id)
@@ -423,5 +740,8 @@ module.exports = {
   deleteProduct,
   getVendorProducts,
   getCategories,
-  addReview
+  addReview,
+  getAdminDashboard,
+  bulkUpdateProducts,
+  getProductAuditTrail
 };
