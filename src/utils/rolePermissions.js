@@ -14,6 +14,14 @@ export const PERMISSIONS = {
   DELETE_PRODUCT: 'delete_product',
   MANAGE_INVENTORY: 'manage_inventory',
   
+  // Item permissions (for admin dashboard)
+  VIEW_ITEMS: 'view_items',
+  CREATE_ITEM: 'create_item',
+  EDIT_ITEM: 'edit_item',
+  DELETE_ITEM: 'delete_item',
+  BULK_UPDATE_ITEMS: 'bulk_update_items',
+  MANAGE_ITEM_CATALOG: 'manage_item_catalog',
+  
   // User permissions
   VIEW_USERS: 'view_users',
   CREATE_USER: 'create_user',
@@ -36,6 +44,7 @@ export const PERMISSIONS = {
   ACCESS_ADMIN_DASHBOARD: 'access_admin_dashboard',
   ACCESS_VENDOR_DASHBOARD: 'access_vendor_dashboard',
   ACCESS_CUSTOMER_DASHBOARD: 'access_customer_dashboard',
+  ACCESS_ITEM_MANAGEMENT: 'access_item_management',
   
   // Payment permissions
   PROCESS_PAYMENTS: 'process_payments',
@@ -58,6 +67,7 @@ export const ROLE_PERMISSIONS = {
     PERMISSIONS.EDIT_PRODUCT,
     PERMISSIONS.DELETE_PRODUCT,
     PERMISSIONS.MANAGE_INVENTORY,
+    PERMISSIONS.VIEW_ITEMS,
     PERMISSIONS.VIEW_ORDERS,
     PERMISSIONS.EDIT_ORDER,
     PERMISSIONS.VIEW_SALES_REPORTS,
@@ -114,6 +124,25 @@ export const canAccessDashboard = (userRole, dashboardType) => {
   return hasPermission(userRole, dashboardPermissions[dashboardType]);
 };
 
+// Check if user can access item management dashboard
+export const canAccessItemManagement = (userRole) => {
+  return hasPermission(userRole, PERMISSIONS.ACCESS_ITEM_MANAGEMENT);
+};
+
+// Check item management specific permissions
+export const canManageItems = (userRole) => {
+  return hasAllPermissions(userRole, [
+    PERMISSIONS.VIEW_ITEMS,
+    PERMISSIONS.CREATE_ITEM,
+    PERMISSIONS.EDIT_ITEM,
+    PERMISSIONS.DELETE_ITEM
+  ]);
+};
+
+export const canBulkUpdateItems = (userRole) => {
+  return hasPermission(userRole, PERMISSIONS.BULK_UPDATE_ITEMS);
+};
+
 // Get default dashboard route for user role
 export const getDefaultDashboard = (userRole) => {
   const dashboardRoutes = {
@@ -155,6 +184,9 @@ export default {
   hasAllPermissions,
   getRolePermissions,
   canAccessDashboard,
+  canAccessItemManagement,
+  canManageItems,
+  canBulkUpdateItems,
   getDefaultDashboard,
   isValidRole,
   getRoleLevel,
