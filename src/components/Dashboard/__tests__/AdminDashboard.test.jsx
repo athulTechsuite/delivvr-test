@@ -45,6 +45,292 @@ describe('AdminDashboard', () => {
     global.fetch = jest.fn();
   });
 
+  // TC-001: Dashboard displays paginated item list
+  test('TC-001: should display paginated item list with navigation controls', async () => {
+    // Mock response with pagination data
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        success: true,
+        data: {
+          products: mockItems,
+          pagination: {
+            currentPage: 1,
+            totalPages: 3,
+            totalItems: 45,
+            itemsPerPage: 20
+          }
+        }
+      })
+    });
+
+    render(
+      <MockWrapper>
+        <AdminDashboard />
+      </MockWrapper>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Item 1')).toBeInTheDocument();
+      expect(screen.getByText('Test Item 2')).toBeInTheDocument();
+    });
+
+    // Verify pagination controls are displayed
+    expect(screen.getByLabelText(/previous page/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/next page/i)).toBeInTheDocument();
+    expect(screen.getByText('Page 1 of 3')).toBeInTheDocument();
+    expect(screen.getByText('45 items total')).toBeInTheDocument();
+
+    // Test pagination navigation
+    const nextButton = screen.getByLabelText(/next page/i);
+    fireEvent.click(nextButton);
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenLastCalledWith(
+        expect.stringContaining('page=2'),
+        expect.any(Object)
+      );
+    });
+  });
+
+  // TC-002: Search functionality filters items correctly
+  test('TC-002: should filter items by name, category, and status', async () => {
+    // Initial load
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        success: true,
+        data: { products: mockItems, pagination: { currentPage: 1, totalPages: 1, totalItems: 2 } }
+      })
+    });
+
+    // Search result
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        success: true,
+        data: { 
+          products: [mockItems[0]], 
+          pagination: { currentPage: 1, totalPages: 1, totalItems: 1 }
+        }
+      })
+    });
+
+    render(
+      <MockWrapper>
+        <AdminDashboard />
+      </MockWrapper>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Item 1')).toBeInTheDocument();
+    });
+
+    // Test search by name
+    const searchInput = screen.getByPlaceholderText(/search items/i);
+    fireEvent.change(searchInput, { target: { value: 'Test Item 1' } });
+    fireEvent.click(screen.getByRole('button', { name: /search/i }));
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenLastCalledWith(
+        expect.stringContaining('search=Test%20Item%201'),
+        expect.any(Object)
+      );
+    });
+
+    // Test category filter
+    const categorySelect = screen.getByLabelText(/category/i);
+    fireEvent.change(categorySelect, { target: { value: 'electronics' } });
+    fireEvent.click(screen.getByRole('button', { name: /search/i }));
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenLastCalledWith(
+        expect.stringContaining('category=electronics'),
+        expect.any(Object)
+      );
+    });
+
+    // Test status filter
+    const statusSelect = screen.getByLabelText(/status/i);
+    fireEvent.change(statusSelect, { target: { value: 'active' } });
+    fireEvent.click(screen.getByRole('button', { name: /search/i }));
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenLastCalledWith(
+        expect.stringContaining('status=active'),
+        expect.any(Object)
+      );
+    });
+
+    // Test clear search
+    const clearButton = screen.getByRole('button', { name: /clear/i });
+    fireEvent.click(clearButton);
+
+    await waitFor(() => {
+      expect(searchInput).toHaveValue('');
+      expect(categorySelect).toHaveValue('');
+      expect(statusSelect).toHaveValue('');
+    });
+  });
+
+  // TC-003: Create item form validation
+  test('TC-003: should validate create item form fields', async () => {
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ success: true, data: { products: [], pagination: {} } })
+    });
+
+    render(
+      <MockWrapper>
+        <AdminDashboard />
+      </MockWrapper>
+    );
+
+    const createButton = screen.getByRole('button', { name: /create item/i });
+    fireEvent.click(createButton);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/item name/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/description/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/category/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/price/i)).toBeInTheDocument();
+      expect(screen.getByText(/upload image/i)).toBeInTheDocument();
+    });
+
+    const saveButton = screen.getByRole('button', { name: /save item/i });
+
+    // Test validation with empty form
+    fireEvent.click(saveButton);
+
+    await waitFor(() => {
+      expect(screen.getByText(/item name is required/i)).toBeInTheDocument();
+      expect(screen.getByText(/description is required/i)).toBeInTheDocument();
+      expect(screen.getByText(/category is required/i)).toBeInTheDocument();
+      expect(screen.getByText(/price is required/i)).toBeInTheDocument();
+    });
+
+    // Test price validation
+    const priceInput = screen.getByLabelText(/price/i);
+    fireEvent.change(priceInput, { target: { value: 'invalid' } });
+    fireEvent.click(saveButton);
+
+    await waitFor(() => {
+      expect(screen.getByText(/price must be a valid number/i)).toBeInTheDocument();
+    });
+
+    fireEvent.change(priceInput, { target: { value: '-10' } });
+    fireEvent.click(saveButton);
+
+    await waitFor(() => {
+      expect(screen.getByText(/price must be greater than 0/i)).toBeInTheDocument();
+    });
+
+    // Test name length validation
+    const nameInput = screen.getByLabelText(/item name/i);
+    fireEvent.change(nameInput, { target: { value: 'a'.repeat(101) } });
+    fireEvent.click(saveButton);
+
+    await waitFor(() => {
+      expect(screen.getByText(/name must be less than 100 characters/i)).toBeInTheDocument();
+    });
+
+    // Test successful validation
+    fireEvent.change(nameInput, { target: { value: 'Valid Item Name' } });
+    fireEvent.change(screen.getByLabelText(/description/i), { target: { value: 'Valid description' } });
+    fireEvent.change(screen.getByLabelText(/category/i), { target: { value: 'electronics' } });
+    fireEvent.change(priceInput, { target: { value: '99.99' } });
+
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ success: true, message: 'Item created successfully' })
+    });
+
+    fireEvent.click(saveButton);
+
+    await waitFor(() => {
+      expect(screen.queryByText(/is required/i)).not.toBeInTheDocument();
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/products'),
+        expect.objectContaining({
+          method: 'POST',
+          body: expect.any(FormData)
+        })
+      );
+    });
+  });
+
+  // TC-004: Image upload size limit enforcement
+  test('TC-004: should enforce image upload size limits', async () => {
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ success: true, data: { products: [], pagination: {} } })
+    });
+
+    render(
+      <MockWrapper>
+        <AdminDashboard />
+      </MockWrapper>
+    );
+
+    const createButton = screen.getByRole('button', { name: /create item/i });
+    fireEvent.click(createButton);
+
+    await waitFor(() => {
+      expect(screen.getByText(/upload image/i)).toBeInTheDocument();
+    });
+
+    const fileInput = screen.getByTestId('image-upload-input');
+
+    // Test file size limit (assuming 5MB limit)
+    const oversizedFile = new File(['x'.repeat(6 * 1024 * 1024)], 'large-image.jpg', {
+      type: 'image/jpeg'
+    });
+
+    fireEvent.change(fileInput, { target: { files: [oversizedFile] } });
+
+    await waitFor(() => {
+      expect(screen.getByText(/file size must be less than 5MB/i)).toBeInTheDocument();
+    });
+
+    // Test invalid file type
+    const invalidFile = new File(['test'], 'document.pdf', {
+      type: 'application/pdf'
+    });
+
+    fireEvent.change(fileInput, { target: { files: [invalidFile] } });
+
+    await waitFor(() => {
+      expect(screen.getByText(/only image files are allowed/i)).toBeInTheDocument();
+    });
+
+    // Test valid file
+    const validFile = new File(['image-content'], 'valid-image.jpg', {
+      type: 'image/jpeg'
+    });
+
+    // Mock URL.createObjectURL for image preview
+    global.URL.createObjectURL = jest.fn(() => 'blob:mock-url');
+
+    fireEvent.change(fileInput, { target: { files: [validFile] } });
+
+    await waitFor(() => {
+      expect(screen.queryByText(/file size must be less than 5MB/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/only image files are allowed/i)).not.toBeInTheDocument();
+      expect(screen.getByAltText(/image preview/i)).toBeInTheDocument();
+    });
+
+    // Test remove uploaded image
+    const removeButton = screen.getByRole('button', { name: /remove image/i });
+    fireEvent.click(removeButton);
+
+    await waitFor(() => {
+      expect(screen.queryByAltText(/image preview/i)).not.toBeInTheDocument();
+    });
+
+    // Cleanup
+    global.URL.createObjectURL.mockRestore();
+  });
+
   // TC-001: Dashboard displays a list of all items with pagination (20 items per page)
   test('TC-001: should display list of items with pagination controls', async () => {
     global.fetch.mockResolvedValueOnce({
