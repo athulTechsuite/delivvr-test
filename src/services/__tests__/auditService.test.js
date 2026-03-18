@@ -39,6 +39,256 @@ describe('AuditService', () => {
     });
   });
 
+  // TC-007: Audit logging records all CRUD operations
+  describe('TC-007: CRUD Operations Audit Logging', () => {
+    test('should record CREATE operations with complete data', async () => {
+      const itemData = {
+        id: '123',
+        name: 'Test Item',
+        description: 'Test description',
+        price: 29.99,
+        category: 'electronics',
+        status: 'active',
+        createdAt: new Date().toISOString()
+      };
+
+      await auditService.logItemCreated('123', itemData);
+
+      expect(fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/audit'),
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${mockToken}`
+          }),
+          body: expect.stringContaining('"action":"CREATE"')
+        })
+      );
+
+      const requestBody = JSON.parse(fetch.mock.calls[0][1].body);
+      expect(requestBody).toEqual(
+        expect.objectContaining({
+          action: 'CREATE',
+          resource: 'ITEM',
+          resourceId: '123',
+          userId: mockUserId,
+          metadata: expect.objectContaining({
+            newItem: itemData,
+            operation: 'item_creation'
+          }),
+          timestamp: expect.any(String)
+        })
+      );
+    });
+
+    test('should record READ operations with access details', async () => {
+      const itemId = '123';
+      const readMetadata = {
+        viewType: 'detail',
+        duration: 30000,
+        source: 'web_interface',
+        searchQuery: null
+      };
+
+      await auditService.logItemViewed(itemId, readMetadata);
+
+      const requestBody = JSON.parse(fetch.mock.calls[0][1].body);
+      expect(requestBody).toEqual(
+        expect.objectContaining({
+          action: 'READ',
+          resource: 'ITEM',
+          resourceId: itemId,
+          userId: mockUserId,
+          metadata: expect.objectContaining({
+            ...readMetadata,
+            operation: 'item_access'
+          }),
+          timestamp: expect.any(String)
+        })
+      );
+    });
+
+    test('should record UPDATE operations with before and after states', async () => {
+      const itemId = '123';
+      const oldData = {
+        name: 'Old Name',
+        price: 19.99,
+        status: 'active',
+        lastModified: '2024-01-01T00:00:00Z'
+      };
+      const newData = {
+        name: 'New Name',
+        price: 29.99,
+        status: 'active',
+        lastModified: new Date().toISOString()
+      };
+
+      await auditService.logItemUpdated(itemId, oldData, newData);
+
+      const requestBody = JSON.parse(fetch.mock.calls[0][1].body);
+      expect(requestBody).toEqual(
+        expect.objectContaining({
+          action: 'UPDATE',
+          resource: 'ITEM',
+          resourceId: itemId,
+          userId: mockUserId,
+          changes: {
+            before: oldData,
+            after: newData
+          },
+          metadata: expect.objectContaining({
+            operation: 'item_modification',
+            fieldsChanged: expect.arrayContaining(['name', 'price', 'lastModified'])
+          }),
+          timestamp: expect.any(String)
+        })
+      );
+    });
+
+    test('should record DELETE operations with deleted item data', async () => {
+      const itemId = '123';
+      const deletedItem = {
+        id: '123',
+        name: 'Deleted Item',
+        price: 39.99,
+        status: 'active',
+        deletedAt: new Date().toISOString()
+      };
+
+      await auditService.logItemDeleted(itemId, deletedItem);
+
+      const requestBody = JSON.parse(fetch.mock.calls[0][1].body);
+      expect(requestBody).toEqual(
+        expect.objectContaining({
+          action: 'DELETE',
+          resource: 'ITEM',
+          resourceId: itemId,
+          userId: mockUserId,
+          changes: {
+            before: deletedItem,
+            after: null
+          },
+          metadata: expect.objectContaining({
+            operation: 'item_deletion',
+            softDelete: false
+          }),
+          timestamp: expect.any(String)
+        })
+      );
+    });
+
+    test('should record all CRUD operations for different resource types', async () => {
+      // Test user CRUD operations
+      const userData = { id: '456', username: 'testuser', email: 'test@example.com' };
+      await auditService.logUserCreated('456', userData);
+      
+      let requestBody = JSON.parse(fetch.mock.calls[0][1].body);
+      expect(requestBody.resource).toBe('USER');
+      expect(requestBody.action).toBe('CREATE');
+
+      // Test category CRUD operations
+      const categoryData = { id: '789', name: 'Electronics', description: 'Electronic items' };
+      await auditService.logCategoryUpdated('789', { name: 'Old Electronics' }, categoryData);
+      
+      requestBody = JSON.parse(fetch.mock.calls[1][1].body);
+      expect(requestBody.resource).toBe('CATEGORY');
+      expect(requestBody.action).toBe('UPDATE');
+
+      // Test order CRUD operations
+      const orderData = { id: '101', total: 99.99, status: 'pending' };
+      await auditService.logOrderDeleted('101', orderData);
+      
+      requestBody = JSON.parse(fetch.mock.calls[2][1].body);
+      expect(requestBody.resource).toBe('ORDER');
+      expect(requestBody.action).toBe('DELETE');
+    });
+
+    test('should capture operation metadata for all CRUD operations', async () => {
+      const itemData = { id: '123', name: 'Test Item', price: 29.99 };
+      
+      await auditService.logItemCreated('123', itemData);
+
+      const requestBody = JSON.parse(fetch.mock.calls[0][1].body);
+      expect(requestBody.metadata).toEqual(
+        expect.objectContaining({
+          operation: 'item_creation',
+          newItem: itemData,
+          userAgent: 'Mozilla/5.0 (Test Browser)',
+          ipAddress: expect.any(String),
+          sessionId: expect.any(String)
+        })
+      );
+    });
+
+    test('should log CRUD operations with proper sequencing', async () => {
+      const itemId = '123';
+      const itemData = { id: itemId, name: 'Test Item', price: 29.99 };
+      
+      // CREATE
+      await auditService.logItemCreated(itemId, itemData);
+      
+      // READ
+      await auditService.logItemViewed(itemId, { viewType: 'detail' });
+      
+      // UPDATE
+      const updatedData = { ...itemData, name: 'Updated Item', price: 39.99 };
+      await auditService.logItemUpdated(itemId, itemData, updatedData);
+      
+      // DELETE
+      await auditService.logItemDeleted(itemId, updatedData);
+
+      expect(fetch).toHaveBeenCalledTimes(4);
+      
+      const createRequest = JSON.parse(fetch.mock.calls[0][1].body);
+      const readRequest = JSON.parse(fetch.mock.calls[1][1].body);
+      const updateRequest = JSON.parse(fetch.mock.calls[2][1].body);
+      const deleteRequest = JSON.parse(fetch.mock.calls[3][1].body);
+      
+      expect(createRequest.action).toBe('CREATE');
+      expect(readRequest.action).toBe('READ');
+      expect(updateRequest.action).toBe('UPDATE');
+      expect(deleteRequest.action).toBe('DELETE');
+      
+      // Verify chronological order
+      expect(new Date(createRequest.timestamp).getTime()).toBeLessThanOrEqual(
+        new Date(readRequest.timestamp).getTime()
+      );
+      expect(new Date(readRequest.timestamp).getTime()).toBeLessThanOrEqual(
+        new Date(updateRequest.timestamp).getTime()
+      );
+      expect(new Date(updateRequest.timestamp).getTime()).toBeLessThanOrEqual(
+        new Date(deleteRequest.timestamp).getTime()
+      );
+    });
+
+    test('should handle batch CRUD operations logging', async () => {
+      const items = [
+        { id: '1', name: 'Item 1', price: 10.00 },
+        { id: '2', name: 'Item 2', price: 20.00 },
+        { id: '3', name: 'Item 3', price: 30.00 }
+      ];
+
+      await auditService.logBulkCreate(items);
+
+      const requestBody = JSON.parse(fetch.mock.calls[0][1].body);
+      expect(requestBody).toEqual(
+        expect.objectContaining({
+          action: 'BULK_CREATE',
+          resource: 'ITEM',
+          userId: mockUserId,
+          metadata: expect.objectContaining({
+            operation: 'bulk_creation',
+            itemCount: 3,
+            items: items,
+            batchId: expect.any(String)
+          }),
+          timestamp: expect.any(String)
+        })
+      );
+    });
+  });
+
   // TC-008: Changes are logged for audit purposes
   describe('TC-008: Audit Logging', () => {
     test('should log item creation event', async () => {
