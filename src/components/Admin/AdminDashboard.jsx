@@ -43,31 +43,72 @@ import {
   CloudUpload as UploadIcon,
   Close as CloseIcon
 } from '@mui/icons-material';
+import DOMPurify from 'dompurify';
+import validator from 'validator';
 import { useAuth } from '../../hooks/useAuth';
 import { itemsAPI } from '../../services/api';
 import ItemForm from './ItemForm';
 import ImageUpload from './ImageUpload';
 import './AdminDashboard.css';
 
-// Status enum constants - fetched from API or shared constants
-export const ITEM_STATUS = {
-  ACTIVE: 'active',
-  INACTIVE: 'inactive',
-  DRAFT: 'draft'
-};
-
-// Input sanitization utility
+// Proper sanitization utility using DOMPurify and validator.js
 const sanitizeInput = (input) => {
   if (typeof input !== 'string') return input;
-  return input
-    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-    .replace(/[<>'"]/g, '')
-    .trim()
-    .substring(0, 255);
+  
+  // Use DOMPurify to sanitize HTML/XSS
+  const sanitized = DOMPurify.sanitize(input, { 
+    ALLOWED_TAGS: [],
+    ALLOWED_ATTR: []
+  });
+  
+  // Additional validation using validator.js
+  const trimmed = validator.escape(sanitized).trim();
+  
+  // Length validation
+  return validator.isLength(trimmed, { max: 255 }) ? trimmed : trimmed.substring(0, 255);
 };
 
+// Thread-safe operation queue with mutex
+class OperationQueue {
+  constructor() {
+    this.queue = [];
+    this.processing = false;
+    this.mutex = Promise.resolve();
+  }
+
+  async enqueue(operation) {
+    return new Promise((resolve, reject) => {
+      this.queue.push({ operation, resolve, reject });
+      this.processQueue();
+    });
+  }
+
+  async processQueue() {
+    if (this.processing) return;
+    
+    // Atomic lock acquisition
+    this.mutex = this.mutex.then(async () => {
+      this.processing = true;
+      
+      while (this.queue.length > 0) {
+        const { operation, resolve, reject } = this.queue.shift();
+        try {
+          const result = await operation();
+          resolve(result);
+        } catch (error) {
+          reject(error);
+        }
+      }
+      
+      this.processing = false;
+    });
+    
+    return this.mutex;
+  }
+}
+
 // Form validation utility
-const validateFormData = (formData) => {
+const validateFormData = (formData, validStatuses) => {
   const errors = [];
   
   if (!formData.name || formData.name.trim().length < 2) {
@@ -86,7 +127,7 @@ const validateFormData = (formData) => {
     errors.push('Category is required');
   }
   
-  if (!formData.status || !Object.values(ITEM_STATUS).includes(formData.status)) {
+  if (!formData.status || !validStatuses.includes(formData.status)) {
     errors.push('Valid status is required');
   }
   
@@ -99,11 +140,10 @@ const AdminDashboard = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-  const [validStatuses, setValidStatuses] = useState(Object.values(ITEM_STATUS));
+  const [validStatuses, setValidStatuses] = useState([]);
   
-  // Operation queue for concurrent operations
-  const operationQueueRef = useRef([]);
-  const isProcessingRef = useRef(false);
+  // Thread-safe operation queue
+  const operationQueueRef = useRef(new OperationQueue());
   
   // Pagination
   const [currentPage, setCurrentPage] = useState(1);
@@ -123,14 +163,19 @@ const AdminDashboard = () => {
   const [selectedItem, setSelectedItem] = useState(null);
   const [formMode, setFormMode] = useState('create'); // 'create' or 'edit'
 
-  // Validate admin permissions with token verification
+  // Server-side token validation with proper error handling
   const validateAdminAccess = useCallback(async () => {
     if (!isAdmin || !token) {
       return false;
     }
     
     try {
-      // Verify token and admin permissions with backend
+      // Server-side token validation and admin permissions check
+      const response = await itemsAPI.validateAdminToken(token);
+      if (!response.data?.valid) {
+        return false;
+      }
+      
       const hasPermission = await checkPermission('admin.dashboard.access');
       return hasPermission;
     } catch (err) {
@@ -139,46 +184,28 @@ const AdminDashboard = () => {
     }
   }, [isAdmin, token, checkPermission]);
 
-  // Fetch valid statuses from API
+  // Fetch valid statuses from API as single source of truth
   const fetchValidStatuses = useCallback(async () => {
     try {
       const response = await itemsAPI.getItemStatuses();
       if (response.data && Array.isArray(response.data)) {
         setValidStatuses(response.data);
+      } else {
+        throw new Error('Invalid status response format');
       }
     } catch (err) {
-      console.warn('Failed to fetch valid statuses, using defaults:', err);
-      setValidStatuses(Object.values(ITEM_STATUS));
+      console.warn('Failed to fetch valid statuses:', err);
+      setValidStatuses(['active', 'inactive', 'draft']); // Fallback
     }
   }, []);
 
-  // Process operation queue to handle concurrent operations
-  const processOperationQueue = useCallback(async () => {
-    if (isProcessingRef.current || operationQueueRef.current.length === 0) {
-      return;
-    }
-    
-    isProcessingRef.current = true;
-    
-    while (operationQueueRef.current.length > 0) {
-      const operation = operationQueueRef.current.shift();
-      try {
-        await operation();
-      } catch (err) {
-        console.error('Operation failed:', err);
-      }
-    }
-    
-    isProcessingRef.current = false;
-  }, []);
-
-  // Fetch items with pagination and filters
+  // Fetch items with pagination and filters - server-side validation
   const fetchItems = useCallback(async () => {
     try {
       setLoading(true);
       setError('');
       
-      // Sanitize inputs before sending to API
+      // Note: Client-side sanitization for UI only - server validates all inputs
       const params = {
         page: currentPage,
         limit: itemsPerPage,
@@ -235,6 +262,8 @@ const AdminDashboard = () => {
         fetchItems();
         fetchCategories();
         fetchValidStatuses();
+      } else {
+        setError('Access denied. Please re-authenticate.');
       }
     };
     
@@ -268,54 +297,76 @@ const AdminDashboard = () => {
     setCurrentPage(page);
   };
 
-  // Handle create item
+  // Handle create item with server-side permission check
   const handleCreateItem = async () => {
-    const hasPermission = await checkPermission('admin.items.create');
-    if (!hasPermission) {
-      setError('Insufficient permissions to create items');
-      return;
+    try {
+      const hasPermission = await checkPermission('admin.items.create');
+      if (!hasPermission) {
+        setError('Insufficient permissions to create items');
+        return;
+      }
+      
+      setSelectedItem(null);
+      setFormMode('create');
+      setOpenItemForm(true);
+    } catch (err) {
+      setError('Failed to verify permissions');
     }
-    
-    setSelectedItem(null);
-    setFormMode('create');
-    setOpenItemForm(true);
   };
 
-  // Handle edit item
+  // Handle edit item with server-side permission check
   const handleEditItem = async (item) => {
-    const hasPermission = await checkPermission('admin.items.update');
-    if (!hasPermission) {
-      setError('Insufficient permissions to edit items');
-      return;
+    try {
+      const hasPermission = await checkPermission('admin.items.update');
+      if (!hasPermission) {
+        setError('Insufficient permissions to edit items');
+        return;
+      }
+      
+      setSelectedItem(item);
+      setFormMode('edit');
+      setOpenItemForm(true);
+    } catch (err) {
+      setError('Failed to verify permissions');
     }
-    
-    setSelectedItem(item);
-    setFormMode('edit');
-    setOpenItemForm(true);
   };
 
   // Handle delete item with operation queuing
   const handleDeleteItem = async (item) => {
-    const hasPermission = await checkPermission('admin.items.delete');
-    if (!hasPermission) {
-      setError('Insufficient permissions to delete items');
-      return;
+    try {
+      const hasPermission = await checkPermission('admin.items.delete');
+      if (!hasPermission) {
+        setError('Insufficient permissions to delete items');
+        return;
+      }
+      
+      setSelectedItem(item);
+      setOpenDeleteDialog(true);
+    } catch (err) {
+      setError('Failed to verify permissions');
     }
-    
-    setSelectedItem(item);
-    setOpenDeleteDialog(true);
   };
 
-  // Confirm delete with optimistic locking
+  // Confirm delete with proper optimistic locking and version checking
   const confirmDelete = async () => {
     if (!selectedItem) return;
     
     const deleteOperation = async () => {
+      setLoading(true);
+      
       try {
-        setLoading(true);
+        // Fetch latest version to ensure no conflicts
+        const latestItem = await itemsAPI.getItem(selectedItem.id);
+        
+        if (latestItem.data.version !== selectedItem.version) {
+          throw new Error('Item has been modified by another user. Please refresh and try again.');
+        }
+        
         await itemsAPI.deleteItem(selectedItem.id, { 
-          version: selectedItem.version // Include version for optimistic locking
+          version: selectedItem.version,
+          timestamp: new Date().toISOString()
         });
+        
         setSuccess('Item deleted successfully');
         await fetchItems();
         setOpenDeleteDialog(false);
@@ -324,30 +375,38 @@ const AdminDashboard = () => {
         const errorMessage = err.response?.data?.message || 'Failed to delete item. Please try again.';
         setError(errorMessage);
         console.error('Delete item error:', err);
+        
+        // Handle version conflict
+        if (err.response?.status === 409) {
+          await fetchItems(); // Refresh data
+        }
       } finally {
         setLoading(false);
       }
     };
     
-    // Add to operation queue to handle concurrent deletes
-    operationQueueRef.current.push(deleteOperation);
-    await processOperationQueue();
+    // Use thread-safe operation queue
+    try {
+      await operationQueueRef.current.enqueue(deleteOperation);
+    } catch (err) {
+      console.error('Queue operation failed:', err);
+    }
   };
 
-  // Handle form submit with validation
+  // Handle form submit with validation and proper conflict resolution
   const handleFormSubmit = async (formData) => {
     try {
       setLoading(true);
       setError('');
       
-      // Validate form data
-      const validationErrors = validateFormData(formData);
+      // Validate form data with current valid statuses
+      const validationErrors = validateFormData(formData, validStatuses);
       if (validationErrors.length > 0) {
         setError(validationErrors.join(', '));
         return;
       }
       
-      // Sanitize form data
+      // Note: Client-side sanitization for UI - server does comprehensive validation
       const sanitizedData = {
         ...formData,
         name: sanitizeInput(formData.name),
@@ -356,9 +415,9 @@ const AdminDashboard = () => {
         status: sanitizeInput(formData.status)
       };
       
-      // Validate status against backend schema
+      // Validate status against current backend schema
       if (!validStatuses.includes(sanitizedData.status)) {
-        setError('Invalid status value');
+        setError('Invalid status value. Please refresh the page.');
         return;
       }
       
@@ -366,9 +425,17 @@ const AdminDashboard = () => {
         await itemsAPI.createItem(sanitizedData);
         setSuccess('Item created successfully');
       } else {
+        // For updates, fetch latest version to prevent conflicts
+        const latestItem = await itemsAPI.getItem(selectedItem.id);
+        
+        if (latestItem.data.version !== selectedItem.version) {
+          throw new Error('Item has been modified by another user. Please refresh and try again.');
+        }
+        
         await itemsAPI.updateItem(selectedItem.id, {
           ...sanitizedData,
-          version: selectedItem.version // Include version for optimistic locking
+          version: selectedItem.version,
+          timestamp: new Date().toISOString()
         });
         setSuccess('Item updated successfully');
       }
@@ -380,6 +447,12 @@ const AdminDashboard = () => {
       const errorMessage = err.response?.data?.message || `Failed to ${formMode} item. Please check your input and try again.`;
       setError(errorMessage);
       console.error(`${formMode} item error:`, err);
+      
+      // Handle version conflicts
+      if (err.response?.status === 409) {
+        await fetchItems(); // Refresh data
+        setError('Item was modified by another user. Please try again with the updated data.');
+      }
     } finally {
       setLoading(false);
     }
@@ -391,14 +464,15 @@ const AdminDashboard = () => {
     setSuccess('');
   };
 
-  // Get status color
+  // Get status color using valid statuses
   const getStatusColor = (status) => {
-    switch (status?.toLowerCase()) {
-      case ITEM_STATUS.ACTIVE:
+    const normalizedStatus = status?.toLowerCase();
+    switch (normalizedStatus) {
+      case 'active':
         return 'success';
-      case ITEM_STATUS.INACTIVE:
+      case 'inactive':
         return 'error';
-      case ITEM_STATUS.DRAFT:
+      case 'draft':
         return 'warning';
       default:
         return 'default';
@@ -413,7 +487,7 @@ const AdminDashboard = () => {
     }).format(amount);
   };
 
-  // Enhanced admin check with backend verification
+  // Enhanced admin check with server-side verification
   if (!isAdmin || !token) {
     return (
       <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
@@ -475,7 +549,7 @@ const AdminDashboard = () => {
                   Active Items
                 </Typography>
                 <Typography variant="h4">
-                  {items.filter(item => item.status === ITEM_STATUS.ACTIVE).length}
+                  {items.filter(item => item.status?.toLowerCase() === 'active').length}
                 </Typography>
               </CardContent>
             </Card>
@@ -487,7 +561,7 @@ const AdminDashboard = () => {
                   Draft Items
                 </Typography>
                 <Typography variant="h4">
-                  {items.filter(item => item.status === ITEM_STATUS.DRAFT).length}
+                  {items.filter(item => item.status?.toLowerCase() === 'draft').length}
                 </Typography>
               </CardContent>
             </Card>
