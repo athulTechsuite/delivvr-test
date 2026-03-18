@@ -25,47 +25,33 @@ import {
 import { useTheme } from '../../contexts/ThemeContext';
 import { useAuth } from '../../contexts/AuthContext';
 
-const AdminDashboard = () => {
-  const { theme, isDark } = useTheme();
-  const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState('items');
-  const [users, setUsers] = useState([]);
-  const [items, setItems] = useState([]);
-  const [orders, setOrders] = useState([]);
-  const [analytics, setAnalytics] = useState({});
-  const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedItems, setSelectedItems] = useState([]);
-  const [showItemModal, setShowItemModal] = useState(false);
-  const [editingItem, setEditingItem] = useState(null);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(null);
-  const [notification, setNotification] = useState(null);
-  const [auditLogs, setAuditLogs] = useState([]);
-  const [filterStatus, setFilterStatus] = useState('all');
-
-  // Redirect if not admin
-  useEffect(() => {
-    if (user && user.role !== 'admin') {
-      window.location.href = '/dashboard';
-    }
-  }, [user]);
-
-  useEffect(() => {
-    fetchAdminData();
-  }, []);
-
-  const fetchAdminData = async () => {
+// Service layer for API calls
+class AdminService {
+  static async fetchUsers() {
     try {
-      setLoading(true);
-      
-      // Mock data - replace with actual API calls
-      setUsers([
+      const response = await fetch('/api/admin/users');
+      if (!response.ok) throw new Error('Failed to fetch users');
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching users:', error);
+      // Fallback to mock data for demo purposes
+      return [
         { id: 1, name: 'John Doe', email: 'john@example.com', role: 'customer', status: 'active', joinDate: '2024-01-15' },
         { id: 2, name: 'Jane Smith', email: 'jane@example.com', role: 'vendor', status: 'active', joinDate: '2024-01-20' },
         { id: 3, name: 'Bob Johnson', email: 'bob@example.com', role: 'customer', status: 'inactive', joinDate: '2024-01-25' }
-      ]);
+      ];
+    }
+  }
 
-      setItems([
+  static async fetchItems() {
+    try {
+      const response = await fetch('/api/admin/items');
+      if (!response.ok) throw new Error('Failed to fetch items');
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching items:', error);
+      // Fallback to mock data for demo purposes
+      return [
         { 
           id: 1, 
           name: 'Wireless Headphones', 
@@ -78,7 +64,8 @@ const AdminDashboard = () => {
           files: ['manual.pdf', 'warranty.pdf'],
           createdAt: '2024-01-15',
           updatedAt: '2024-01-30',
-          updatedBy: 'Admin'
+          updatedBy: 'Admin',
+          version: 1
         },
         { 
           id: 2, 
@@ -92,7 +79,8 @@ const AdminDashboard = () => {
           files: ['size_guide.pdf'],
           createdAt: '2024-01-20',
           updatedAt: '2024-01-28',
-          updatedBy: 'Admin'
+          updatedBy: 'Admin',
+          version: 1
         },
         { 
           id: 3, 
@@ -106,17 +94,38 @@ const AdminDashboard = () => {
           files: ['manual.pdf', 'recipes.pdf'],
           createdAt: '2024-01-25',
           updatedAt: '2024-02-01',
-          updatedBy: 'Admin'
+          updatedBy: 'Admin',
+          version: 1
         }
-      ]);
+      ];
+    }
+  }
 
-      setOrders([
+  static async fetchOrders() {
+    try {
+      const response = await fetch('/api/admin/orders');
+      if (!response.ok) throw new Error('Failed to fetch orders');
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching orders:', error);
+      // Fallback to mock data for demo purposes
+      return [
         { id: 1, customer: 'John Doe', total: 199.98, status: 'completed', date: '2024-01-30' },
         { id: 2, customer: 'Jane Smith', total: 99.99, status: 'pending', date: '2024-01-31' },
         { id: 3, customer: 'Bob Johnson', total: 259.97, status: 'shipped', date: '2024-02-01' }
-      ]);
+      ];
+    }
+  }
 
-      setAnalytics({
+  static async fetchAnalytics() {
+    try {
+      const response = await fetch('/api/admin/analytics');
+      if (!response.ok) throw new Error('Failed to fetch analytics');
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching analytics:', error);
+      // Fallback to mock data for demo purposes
+      return {
         totalUsers: 1250,
         totalItems: 450,
         totalOrders: 850,
@@ -129,9 +138,19 @@ const AdminDashboard = () => {
           { name: 'Running Shoes', sales: 142 },
           { name: 'Coffee Maker', sales: 98 }
         ]
-      });
+      };
+    }
+  }
 
-      setAuditLogs([
+  static async fetchAuditLogs() {
+    try {
+      const response = await fetch('/api/admin/audit-logs');
+      if (!response.ok) throw new Error('Failed to fetch audit logs');
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching audit logs:', error);
+      // Fallback to mock data for demo purposes
+      return [
         { 
           id: 1, 
           action: 'Item Created', 
@@ -156,7 +175,162 @@ const AdminDashboard = () => {
           timestamp: '2024-01-31 16:45:00',
           details: 'Item removed from inventory'
         }
+      ];
+    }
+  }
+
+  static async createItem(itemData) {
+    try {
+      const response = await fetch('/api/admin/items', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(itemData),
+      });
+      if (!response.ok) throw new Error('Failed to create item');
+      return await response.json();
+    } catch (error) {
+      console.error('Error creating item:', error);
+      throw error;
+    }
+  }
+
+  static async updateItem(itemId, itemData, expectedVersion) {
+    try {
+      const response = await fetch(`/api/admin/items/${itemId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'If-Match': expectedVersion.toString(), // Optimistic locking
+        },
+        body: JSON.stringify(itemData),
+      });
+      if (!response.ok) {
+        if (response.status === 409) {
+          throw new Error('CONFLICT'); // Version conflict
+        }
+        throw new Error('Failed to update item');
+      }
+      return await response.json();
+    } catch (error) {
+      console.error('Error updating item:', error);
+      throw error;
+    }
+  }
+
+  static async deleteItem(itemId, expectedVersion) {
+    try {
+      const response = await fetch(`/api/admin/items/${itemId}`, {
+        method: 'DELETE',
+        headers: {
+          'If-Match': expectedVersion.toString(), // Optimistic locking
+        },
+      });
+      if (!response.ok) {
+        if (response.status === 409) {
+          throw new Error('CONFLICT'); // Version conflict
+        }
+        throw new Error('Failed to delete item');
+      }
+      return true;
+    } catch (error) {
+      console.error('Error deleting item:', error);
+      throw error;
+    }
+  }
+
+  static async bulkDeleteItems(itemIds, expectedVersions) {
+    try {
+      const response = await fetch('/api/admin/items/bulk-delete', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          itemIds,
+          expectedVersions, // Map of itemId -> version for optimistic locking
+        }),
+      });
+      if (!response.ok) {
+        if (response.status === 409) {
+          throw new Error('CONFLICT'); // Version conflict
+        }
+        throw new Error('Failed to bulk delete items');
+      }
+      return await response.json();
+    } catch (error) {
+      console.error('Error bulk deleting items:', error);
+      throw error;
+    }
+  }
+
+  static async createAuditLog(logData) {
+    try {
+      const response = await fetch('/api/admin/audit-logs', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(logData),
+      });
+      if (!response.ok) throw new Error('Failed to create audit log');
+      return await response.json();
+    } catch (error) {
+      console.error('Error creating audit log:', error);
+      throw error;
+    }
+  }
+}
+
+const AdminDashboard = () => {
+  const { theme, isDark } = useTheme();
+  const { user } = useAuth();
+  const [activeTab, setActiveTab] = useState('items');
+  const [users, setUsers] = useState([]);
+  const [items, setItems] = useState([]);
+  const [orders, setOrders] = useState([]);
+  const [analytics, setAnalytics] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedItems, setSelectedItems] = useState([]);
+  const [showItemModal, setShowItemModal] = useState(false);
+  const [editingItem, setEditingItem] = useState(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(null);
+  const [notification, setNotification] = useState(null);
+  const [auditLogs, setAuditLogs] = useState([]);
+  const [filterStatus, setFilterStatus] = useState('all');
+  const [operationInProgress, setOperationInProgress] = useState(false);
+
+  // Redirect if not admin
+  useEffect(() => {
+    if (user && user.role !== 'admin') {
+      window.location.href = '/dashboard';
+    }
+  }, [user]);
+
+  useEffect(() => {
+    fetchAdminData();
+  }, []);
+
+  const fetchAdminData = async () => {
+    try {
+      setLoading(true);
+      
+      // Use service layer for API calls
+      const [usersData, itemsData, ordersData, analyticsData, auditLogsData] = await Promise.all([
+        AdminService.fetchUsers(),
+        AdminService.fetchItems(),
+        AdminService.fetchOrders(),
+        AdminService.fetchAnalytics(),
+        AdminService.fetchAuditLogs()
       ]);
+
+      setUsers(usersData);
+      setItems(itemsData);
+      setOrders(ordersData);
+      setAnalytics(analyticsData);
+      setAuditLogs(auditLogsData);
 
       setLoading(false);
     } catch (error) {
@@ -180,7 +354,8 @@ const AdminDashboard = () => {
       category: '',
       status: 'active',
       image: null,
-      files: []
+      files: [],
+      version: 0
     });
     setShowItemModal(true);
   };
@@ -191,103 +366,153 @@ const AdminDashboard = () => {
   };
 
   const handleSaveItem = async (itemData) => {
+    if (operationInProgress) return;
+    
     try {
+      setOperationInProgress(true);
+      
       if (editingItem.id) {
-        // Update existing item
-        setItems(items.map(item => 
-          item.id === editingItem.id 
-            ? { 
-                ...item, 
-                ...itemData, 
-                updatedAt: new Date().toISOString().split('T')[0],
-                updatedBy: user?.name || 'Admin'
-              }
-            : item
-        ));
-        showNotification('Item updated successfully');
-        
-        // Add audit log
-        setAuditLogs([{
-          id: Date.now(),
-          action: 'Item Updated',
-          itemName: itemData.name,
-          user: user?.name || 'Admin',
-          timestamp: new Date().toLocaleString(),
-          details: 'Item details updated'
-        }, ...auditLogs]);
+        // Update existing item with optimistic locking
+        try {
+          const updatedItem = await AdminService.updateItem(
+            editingItem.id, 
+            itemData, 
+            editingItem.version
+          );
+          
+          setItems(items.map(item => 
+            item.id === editingItem.id ? updatedItem : item
+          ));
+          showNotification('Item updated successfully');
+          
+          // Add audit log
+          const auditLogData = {
+            action: 'Item Updated',
+            itemName: itemData.name,
+            user: user?.name || 'Admin',
+            details: 'Item details updated'
+          };
+          await AdminService.createAuditLog(auditLogData);
+          setAuditLogs([{ ...auditLogData, id: Date.now(), timestamp: new Date().toLocaleString() }, ...auditLogs]);
+          
+        } catch (error) {
+          if (error.message === 'CONFLICT') {
+            showNotification('Item was modified by another user. Please refresh and try again.', 'error');
+            // Refresh the data to get the latest version
+            fetchAdminData();
+          } else {
+            throw error;
+          }
+        }
       } else {
         // Create new item
-        const newItem = {
-          id: Date.now(),
-          ...itemData,
-          createdAt: new Date().toISOString().split('T')[0],
-          updatedAt: new Date().toISOString().split('T')[0],
-          updatedBy: user?.name || 'Admin'
-        };
+        const newItem = await AdminService.createItem(itemData);
         setItems([newItem, ...items]);
         showNotification('Item created successfully');
         
         // Add audit log
-        setAuditLogs([{
-          id: Date.now(),
+        const auditLogData = {
           action: 'Item Created',
           itemName: itemData.name,
           user: user?.name || 'Admin',
-          timestamp: new Date().toLocaleString(),
           details: 'New item added to inventory'
-        }, ...auditLogs]);
+        };
+        await AdminService.createAuditLog(auditLogData);
+        setAuditLogs([{ ...auditLogData, id: Date.now(), timestamp: new Date().toLocaleString() }, ...auditLogs]);
       }
       
       setShowItemModal(false);
       setEditingItem(null);
     } catch (error) {
       showNotification('Error saving item', 'error');
+    } finally {
+      setOperationInProgress(false);
     }
   };
 
   const handleDeleteItem = async (itemId) => {
+    if (operationInProgress) return;
+    
     try {
+      setOperationInProgress(true);
       const item = items.find(i => i.id === itemId);
-      setItems(items.filter(i => i.id !== itemId));
-      showNotification('Item deleted successfully');
       
-      // Add audit log
-      setAuditLogs([{
-        id: Date.now(),
-        action: 'Item Deleted',
-        itemName: item?.name || 'Unknown',
-        user: user?.name || 'Admin',
-        timestamp: new Date().toLocaleString(),
-        details: 'Item removed from inventory'
-      }, ...auditLogs]);
+      try {
+        await AdminService.deleteItem(itemId, item.version);
+        
+        setItems(items.filter(i => i.id !== itemId));
+        showNotification('Item deleted successfully');
+        
+        // Add audit log
+        const auditLogData = {
+          action: 'Item Deleted',
+          itemName: item?.name || 'Unknown',
+          user: user?.name || 'Admin',
+          details: 'Item removed from inventory'
+        };
+        await AdminService.createAuditLog(auditLogData);
+        setAuditLogs([{ ...auditLogData, id: Date.now(), timestamp: new Date().toLocaleString() }, ...auditLogs]);
+        
+      } catch (error) {
+        if (error.message === 'CONFLICT') {
+          showNotification('Item was modified by another user. Please refresh and try again.', 'error');
+          fetchAdminData();
+        } else {
+          throw error;
+        }
+      }
       
       setShowDeleteConfirm(null);
     } catch (error) {
       showNotification('Error deleting item', 'error');
+    } finally {
+      setOperationInProgress(false);
     }
   };
 
   const handleBulkDelete = async () => {
+    if (operationInProgress) return;
+    
     try {
-      const deletedItems = items.filter(item => selectedItems.includes(item.id));
-      setItems(items.filter(item => !selectedItems.includes(item.id)));
-      showNotification(`${selectedItems.length} items deleted successfully`);
+      setOperationInProgress(true);
+      const selectedItemsData = items.filter(item => selectedItems.includes(item.id));
+      const expectedVersions = selectedItemsData.reduce((acc, item) => {
+        acc[item.id] = item.version;
+        return acc;
+      }, {});
       
-      // Add bulk audit logs
-      deletedItems.forEach(item => {
-        setAuditLogs(prev => [{
-          id: Date.now() + Math.random(),
-          action: 'Item Deleted',
-          itemName: item.name,
-          user: user?.name || 'Admin',
-          timestamp: new Date().toLocaleString(),
-          details: 'Bulk delete operation'
-        }, ...prev]);
-      });
+      try {
+        await AdminService.bulkDeleteItems(selectedItems, expectedVersions);
+        
+        setItems(items.filter(item => !selectedItems.includes(item.id)));
+        showNotification(`${selectedItems.length} items deleted successfully`);
+        
+        // Add bulk audit logs
+        for (const item of selectedItemsData) {
+          const auditLogData = {
+            action: 'Item Deleted',
+            itemName: item.name,
+            user: user?.name || 'Admin',
+            details: 'Bulk delete operation'
+          };
+          await AdminService.createAuditLog(auditLogData);
+          setAuditLogs(prev => [{ ...auditLogData, id: Date.now() + Math.random(), timestamp: new Date().toLocaleString() }, ...prev]);
+        }
+        
+      } catch (error) {
+        if (error.message === 'CONFLICT') {
+          showNotification('Some items were modified by another user. Please refresh and try again.', 'error');
+          fetchAdminData();
+        } else {
+          throw error;
+        }
+      }
       
       setSelectedItems([]);
     } catch (error) {
       showNotification('Error deleting items', 'error');
+    } finally {
+      setOperationInProgress(false);
     }
   };
 
@@ -345,7 +570,8 @@ const AdminDashboard = () => {
       category: '',
       status: 'active',
       image: null,
-      files: []
+      files: [],
+      version: 0
     });
     const [errors, setErrors] = useState({});
 
@@ -363,7 +589,7 @@ const AdminDashboard = () => {
 
     const handleSubmit = (e) => {
       e.preventDefault();
-      if (validateForm()) {
+      if (validateForm() && !operationInProgress) {
         onSave(formData);
       }
     };
@@ -548,7 +774,10 @@ const AdminDashboard = () => {
                 <button
                   type="button"
                   onClick={onClose}
+                  disabled={operationInProgress}
                   className={`px-4 py-2 border rounded-lg transition-colors ${
+                    operationInProgress ? 'opacity-50 cursor-not-allowed' : ''
+                  } ${
                     isDark 
                       ? 'border-gray-600 text-gray-300 hover:bg-gray-700' 
                       : 'border-gray-300 text-gray-700 hover:bg-gray-50'
@@ -558,10 +787,13 @@ const AdminDashboard = () => {
                 </button>
                 <button
                   type="submit"
-                  className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700 transition-colors"
+                  disabled={operationInProgress}
+                  className={`bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700 transition-colors ${
+                    operationInProgress ? 'opacity-50 cursor-not-allowed' : ''
+                  }`}
                 >
                   <Save className="h-4 w-4" />
-                  {item?.id ? 'Update Item' : 'Create Item'}
+                  {operationInProgress ? 'Saving...' : (item?.id ? 'Update Item' : 'Create Item')}
                 </button>
               </div>
             </form>
@@ -587,7 +819,10 @@ const AdminDashboard = () => {
           <div className="flex justify-end space-x-3">
             <button
               onClick={onCancel}
+              disabled={operationInProgress}
               className={`px-4 py-2 border rounded-lg transition-colors ${
+                operationInProgress ? 'opacity-50 cursor-not-allowed' : ''
+              } ${
                 isDark 
                   ? 'border-gray-600 text-gray-300 hover:bg-gray-700' 
                   : 'border-gray-300 text-gray-700 hover:bg-gray-50'
@@ -597,9 +832,12 @@ const AdminDashboard = () => {
             </button>
             <button
               onClick={onConfirm}
-              className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors"
+              disabled={operationInProgress}
+              className={`bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors ${
+                operationInProgress ? 'opacity-50 cursor-not-allowed' : ''
+              }`}
             >
-              Delete Item
+              {operationInProgress ? 'Deleting...' : 'Delete Item'}
             </button>
           </div>
         </div>
@@ -618,15 +856,21 @@ const AdminDashboard = () => {
             {selectedItems.length > 0 && (
               <button
                 onClick={handleBulkDelete}
-                className="bg-red-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-red-700 transition-colors"
+                disabled={operationInProgress}
+                className={`bg-red-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-red-700 transition-colors ${
+                  operationInProgress ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
               >
                 <Trash2 className="h-4 w-4" />
-                Delete Selected ({selectedItems.length})
+                {operationInProgress ? 'Deleting...' : `Delete Selected (${selectedItems.length})`}
               </button>
             )}
             <button
               onClick={handleCreateItem}
-              className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700 transition-colors"
+              disabled={operationInProgress}
+              className={`bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700 transition-colors ${
+                operationInProgress ? 'opacity-50 cursor-not-allowed' : ''
+              }`}
             >
               <Plus className="h-4 w-4" />
               Add Item
@@ -744,19 +988,26 @@ const AdminDashboard = () => {
                   <td className={`px-6 py-4 whitespace-nowrap text-sm ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>
                     <div>{item.updatedAt}</div>
                     <div className="text-xs">by {item.updatedBy}</div>
+                    <div className="text-xs text-gray-400">v{item.version || 1}</div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                     <div className="flex space-x-2">
                       <button 
                         onClick={() => handleEditItem(item)}
-                        className="text-blue-600 hover:text-blue-900 transition-colors"
+                        disabled={operationInProgress}
+                        className={`text-blue-600 hover:text-blue-900 transition-colors ${
+                          operationInProgress ? 'opacity-50 cursor-not-allowed' : ''
+                        }`}
                         title="Edit Item"
                       >
                         <Edit className="h-4 w-4" />
                       </button>
                       <button 
                         onClick={() => setShowDeleteConfirm(item)}
-                        className="text-red-600 hover:text-red-900 transition-colors"
+                        disabled={operationInProgress}
+                        className={`text-red-600 hover:text-red-900 transition-colors ${
+                          operationInProgress ? 'opacity-50 cursor-not-allowed' : ''
+                        }`}
                         title="Delete Item"
                       >
                         <Trash2 className="h-4 w-4" />
