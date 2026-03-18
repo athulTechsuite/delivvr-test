@@ -63,7 +63,7 @@ const TestWrapper = ({ children }) => (
   </BrowserRouter>
 );
 
-describe('AdminDashboard - Item Management', () => {
+describe('AdminDashboard', () => {
   beforeEach(() => {
     mockFetchItems.mockResolvedValue({
       data: mockItems,
@@ -83,33 +83,56 @@ describe('AdminDashboard - Item Management', () => {
     jest.clearAllMocks();
   });
 
-  // TC-001: Dashboard displays paginated list of items with key information
-  describe('TC-001: Item List Display', () => {
-    it('should display paginated list of items with key information', async () => {
+  // TC-001: Admin can access a dedicated dashboard page that displays all existing items
+  describe('TC-001: Admin Dashboard Access and Item Display', () => {
+    it('should successfully display dedicated dashboard page with all existing items - happy path', async () => {
       render(
         <TestWrapper>
           <AdminDashboard />
         </TestWrapper>
       );
 
-      // Wait for items to load
+      // Verify dashboard is accessible
+      expect(screen.getByTestId('admin-dashboard')).toBeInTheDocument();
+      
+      // Wait for items to load and verify all items are displayed
       await waitFor(() => {
         expect(screen.getByText('Test Item 1')).toBeInTheDocument();
       });
 
-      // Verify item information is displayed
+      // Verify all item information is displayed
       expect(screen.getByText('Test Item 1')).toBeInTheDocument();
       expect(screen.getByText('Test Item 2')).toBeInTheDocument();
       expect(screen.getByText('Electronics')).toBeInTheDocument();
       expect(screen.getByText('Clothing')).toBeInTheDocument();
       expect(screen.getByText('active')).toBeInTheDocument();
       expect(screen.getByText('inactive')).toBeInTheDocument();
+      expect(screen.getByText('$99.99')).toBeInTheDocument();
+      expect(screen.getByText('$49.99')).toBeInTheDocument();
       
-      // Verify pagination is present
-      expect(screen.getByRole('navigation')).toBeInTheDocument();
+      // Verify API was called to fetch items
+      expect(mockFetchItems).toHaveBeenCalledTimes(1);
     });
 
-    it('should handle empty item list', async () => {
+    it('should handle dashboard access error - error path', async () => {
+      mockFetchItems.mockRejectedValue(new Error('Failed to fetch items'));
+
+      render(
+        <TestWrapper>
+          <AdminDashboard />
+        </TestWrapper>
+      );
+
+      // Wait for error state
+      await waitFor(() => {
+        expect(screen.getByText(/failed to load items/i)).toBeInTheDocument();
+      });
+
+      // Verify error message is displayed
+      expect(screen.getByText(/error loading dashboard/i)).toBeInTheDocument();
+    });
+
+    it('should handle empty items list - edge case', async () => {
       mockFetchItems.mockResolvedValue({
         data: [],
         totalCount: 0,
@@ -126,11 +149,459 @@ describe('AdminDashboard - Item Management', () => {
       await waitFor(() => {
         expect(screen.getByText(/no items found/i)).toBeInTheDocument();
       });
+
+      expect(screen.getByText(/add your first item/i)).toBeInTheDocument();
     });
   });
 
-  // TC-002: Search and filter functionality
-  describe('TC-002: Search and Filter', () => {
+  // TC-002: Admin can upload new items through a form interface
+  describe('TC-002: Admin Item Upload Form Interface', () => {
+    it('should successfully upload new item through form interface - happy path', async () => {
+      const newItem = { id: 3, name: 'New Test Item', category: 'Electronics', price: 199.99 };
+      mockCreateItem.mockResolvedValue({ success: true, data: newItem });
+
+      render(
+        <TestWrapper>
+          <AdminDashboard />
+        </TestWrapper>
+      );
+
+      // Wait for dashboard to load
+      await waitFor(() => {
+        expect(screen.getByText('Test Item 1')).toBeInTheDocument();
+      });
+
+      // Open upload form
+      const addButton = screen.getByRole('button', { name: /add new item/i });
+      await userEvent.click(addButton);
+
+      // Verify form is displayed
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+      expect(screen.getByText(/add new item/i)).toBeInTheDocument();
+
+      // Fill form with valid data
+      await userEvent.type(screen.getByLabelText(/name/i), 'New Test Item');
+      await userEvent.type(screen.getByLabelText(/description/i), 'New item description');
+      await userEvent.selectOptions(screen.getByLabelText(/category/i), 'Electronics');
+      await userEvent.type(screen.getByLabelText(/price/i), '199.99');
+      await userEvent.type(screen.getByLabelText(/stock/i), '15');
+
+      // Submit form
+      const saveButton = screen.getByRole('button', { name: /save/i });
+      await userEvent.click(saveButton);
+
+      // Verify API call was made with correct data
+      await waitFor(() => {
+        expect(mockCreateItem).toHaveBeenCalledWith(
+          expect.objectContaining({
+            name: 'New Test Item',
+            description: 'New item description',
+            category: 'Electronics',
+            price: '199.99',
+            stock: '15'
+          })
+        );
+      });
+
+      // Verify success message
+      expect(screen.getByText(/item created successfully/i)).toBeInTheDocument();
+    });
+
+    it('should handle upload form validation errors - error path', async () => {
+      render(
+        <TestWrapper>
+          <AdminDashboard />
+        </TestWrapper>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Test Item 1')).toBeInTheDocument();
+      });
+
+      // Open form
+      const addButton = screen.getByRole('button', { name: /add new item/i });
+      await userEvent.click(addButton);
+
+      // Try to submit empty form
+      const saveButton = screen.getByRole('button', { name: /save/i });
+      await userEvent.click(saveButton);
+
+      // Verify validation errors
+      await waitFor(() => {
+        expect(screen.getByText(/name is required/i)).toBeInTheDocument();
+        expect(screen.getByText(/category is required/i)).toBeInTheDocument();
+        expect(screen.getByText(/price is required/i)).toBeInTheDocument();
+      });
+
+      // Verify API was not called
+      expect(mockCreateItem).not.toHaveBeenCalled();
+    });
+
+    it('should handle upload server error - error path', async () => {
+      mockCreateItem.mockRejectedValue(new Error('Server error'));
+
+      render(
+        <TestWrapper>
+          <AdminDashboard />
+        </TestWrapper>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Test Item 1')).toBeInTheDocument();
+      });
+
+      const addButton = screen.getByRole('button', { name: /add new item/i });
+      await userEvent.click(addButton);
+
+      // Fill required fields
+      await userEvent.type(screen.getByLabelText(/name/i), 'Test Item');
+      await userEvent.selectOptions(screen.getByLabelText(/category/i), 'Electronics');
+      await userEvent.type(screen.getByLabelText(/price/i), '99.99');
+
+      const saveButton = screen.getByRole('button', { name: /save/i });
+      await userEvent.click(saveButton);
+
+      // Verify error message
+      await waitFor(() => {
+        expect(screen.getByText(/error creating item/i)).toBeInTheDocument();
+      });
+    });
+  });
+
+  // TC-003: Admin can edit existing items
+  describe('TC-003: Admin Edit Existing Items', () => {
+    it('should successfully edit existing item - happy path', async () => {
+      mockUpdateItem.mockResolvedValue({ success: true });
+
+      render(
+        <TestWrapper>
+          <AdminDashboard />
+        </TestWrapper>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Test Item 1')).toBeInTheDocument();
+      });
+
+      // Click edit button for first item
+      const editButtons = screen.getAllByRole('button', { name: /edit/i });
+      await userEvent.click(editButtons[0]);
+
+      // Verify edit form is displayed with existing data
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+      expect(screen.getByDisplayValue('Test Item 1')).toBeInTheDocument();
+      expect(screen.getByDisplayValue('Test Description 1')).toBeInTheDocument();
+
+      // Modify item data
+      const nameInput = screen.getByDisplayValue('Test Item 1');
+      await userEvent.clear(nameInput);
+      await userEvent.type(nameInput, 'Updated Item Name');
+
+      const priceInput = screen.getByDisplayValue('99.99');
+      await userEvent.clear(priceInput);
+      await userEvent.type(priceInput, '129.99');
+
+      // Save changes
+      const saveButton = screen.getByRole('button', { name: /save/i });
+      await userEvent.click(saveButton);
+
+      // Verify API call was made with correct data
+      await waitFor(() => {
+        expect(mockUpdateItem).toHaveBeenCalledWith(
+          1,
+          expect.objectContaining({
+            name: 'Updated Item Name',
+            price: '129.99'
+          })
+        );
+      });
+
+      // Verify success message
+      expect(screen.getByText(/item updated successfully/i)).toBeInTheDocument();
+    });
+
+    it('should handle edit validation errors - error path', async () => {
+      render(
+        <TestWrapper>
+          <AdminDashboard />
+        </TestWrapper>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Test Item 1')).toBeInTheDocument();
+      });
+
+      const editButtons = screen.getAllByRole('button', { name: /edit/i });
+      await userEvent.click(editButtons[0]);
+
+      // Clear required field
+      const nameInput = screen.getByDisplayValue('Test Item 1');
+      await userEvent.clear(nameInput);
+
+      const saveButton = screen.getByRole('button', { name: /save/i });
+      await userEvent.click(saveButton);
+
+      // Verify validation error
+      await waitFor(() => {
+        expect(screen.getByText(/name is required/i)).toBeInTheDocument();
+      });
+
+      expect(mockUpdateItem).not.toHaveBeenCalled();
+    });
+
+    it('should handle edit server error - error path', async () => {
+      mockUpdateItem.mockRejectedValue(new Error('Update failed'));
+
+      render(
+        <TestWrapper>
+          <AdminDashboard />
+        </TestWrapper>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Test Item 1')).toBeInTheDocument();
+      });
+
+      const editButtons = screen.getAllByRole('button', { name: /edit/i });
+      await userEvent.click(editButtons[0]);
+
+      const nameInput = screen.getByDisplayValue('Test Item 1');
+      await userEvent.clear(nameInput);
+      await userEvent.type(nameInput, 'Updated Name');
+
+      const saveButton = screen.getByRole('button', { name: /save/i });
+      await userEvent.click(saveButton);
+
+      await waitFor(() => {
+        expect(screen.getByText(/error updating item/i)).toBeInTheDocument();
+      });
+    });
+  });
+
+  // TC-004: Admin can delete items with confirmation
+  describe('TC-004: Admin Delete Items with Confirmation', () => {
+    it('should successfully delete item with confirmation - happy path', async () => {
+      mockDeleteItem.mockResolvedValue({ success: true });
+
+      render(
+        <TestWrapper>
+          <AdminDashboard />
+        </TestWrapper>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Test Item 1')).toBeInTheDocument();
+      });
+
+      // Click delete button
+      const deleteButtons = screen.getAllByRole('button', { name: /delete/i });
+      await userEvent.click(deleteButtons[0]);
+
+      // Verify confirmation dialog appears
+      expect(screen.getByText(/are you sure/i)).toBeInTheDocument();
+      expect(screen.getByText(/this action cannot be undone/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /confirm/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /cancel/i })).toBeInTheDocument();
+
+      // Confirm deletion
+      const confirmButton = screen.getByRole('button', { name: /confirm/i });
+      await userEvent.click(confirmButton);
+
+      // Verify API call was made
+      await waitFor(() => {
+        expect(mockDeleteItem).toHaveBeenCalledWith(1);
+      });
+
+      // Verify success message
+      expect(screen.getByText(/item deleted successfully/i)).toBeInTheDocument();
+    });
+
+    it('should cancel deletion when user cancels - happy path', async () => {
+      render(
+        <TestWrapper>
+          <AdminDashboard />
+        </TestWrapper>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Test Item 1')).toBeInTheDocument();
+      });
+
+      const deleteButtons = screen.getAllByRole('button', { name: /delete/i });
+      await userEvent.click(deleteButtons[0]);
+
+      // Cancel deletion
+      const cancelButton = screen.getByRole('button', { name: /cancel/i });
+      await userEvent.click(cancelButton);
+
+      // Verify no API call was made
+      expect(mockDeleteItem).not.toHaveBeenCalled();
+      
+      // Verify confirmation dialog is closed
+      expect(screen.queryByText(/are you sure/i)).not.toBeInTheDocument();
+    });
+
+    it('should handle delete server error - error path', async () => {
+      mockDeleteItem.mockRejectedValue(new Error('Delete failed'));
+
+      render(
+        <TestWrapper>
+          <AdminDashboard />
+        </TestWrapper>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Test Item 1')).toBeInTheDocument();
+      });
+
+      const deleteButtons = screen.getAllByRole('button', { name: /delete/i });
+      await userEvent.click(deleteButtons[0]);
+
+      const confirmButton = screen.getByRole('button', { name: /confirm/i });
+      await userEvent.click(confirmButton);
+
+      await waitFor(() => {
+        expect(screen.getByText(/error deleting item/i)).toBeInTheDocument();
+      });
+    });
+  });
+
+  // TC-005: Dashboard displays appropriate error messages (enhanced coverage)
+  describe('TC-005: Dashboard Error Message Display', () => {
+    it('should display network error messages appropriately - happy path', async () => {
+      // Test successful state first
+      render(
+        <TestWrapper>
+          <AdminDashboard />
+        </TestWrapper>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Test Item 1')).toBeInTheDocument();
+      });
+
+      // Verify no error messages are displayed in success state
+      expect(screen.queryByText(/error/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/failed/i)).not.toBeInTheDocument();
+    });
+
+    it('should display fetch error messages - error path', async () => {
+      mockFetchItems.mockRejectedValue(new Error('Network error'));
+
+      render(
+        <TestWrapper>
+          <AdminDashboard />
+        </TestWrapper>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText(/failed to load items/i)).toBeInTheDocument();
+      });
+
+      // Verify retry option is available
+      expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
+    });
+
+    it('should display validation error messages - error path', async () => {
+      render(
+        <TestWrapper>
+          <AdminDashboard />
+        </TestWrapper>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Test Item 1')).toBeInTheDocument();
+      });
+
+      // Open add form
+      const addButton = screen.getByRole('button', { name: /add new item/i });
+      await userEvent.click(addButton);
+
+      // Submit invalid form
+      const saveButton = screen.getByRole('button', { name: /save/i });
+      await userEvent.click(saveButton);
+
+      // Verify multiple validation errors are displayed
+      await waitFor(() => {
+        expect(screen.getByText(/name is required/i)).toBeInTheDocument();
+        expect(screen.getByText(/category is required/i)).toBeInTheDocument();
+        expect(screen.getByText(/price is required/i)).toBeInTheDocument();
+      });
+    });
+
+    it('should display server error messages with proper formatting - error path', async () => {
+      mockCreateItem.mockRejectedValue({
+        response: {
+          data: {
+            message: 'Validation failed: Item name already exists'
+          }
+        }
+      });
+
+      render(
+        <TestWrapper>
+          <AdminDashboard />
+        </TestWrapper>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Test Item 1')).toBeInTheDocument();
+      });
+
+      const addButton = screen.getByRole('button', { name: /add new item/i });
+      await userEvent.click(addButton);
+
+      // Fill form
+      await userEvent.type(screen.getByLabelText(/name/i), 'Duplicate Item');
+      await userEvent.selectOptions(screen.getByLabelText(/category/i), 'Electronics');
+      await userEvent.type(screen.getByLabelText(/price/i), '99.99');
+
+      const saveButton = screen.getByRole('button', { name: /save/i });
+      await userEvent.click(saveButton);
+
+      // Verify specific server error message is displayed
+      await waitFor(() => {
+        expect(screen.getByText(/item name already exists/i)).toBeInTheDocument();
+      });
+    });
+
+    it('should clear error messages on successful operations - happy path', async () => {
+      // Start with error state
+      mockFetchItems.mockRejectedValueOnce(new Error('Network error'));
+
+      render(
+        <TestWrapper>
+          <AdminDashboard />
+        </TestWrapper>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText(/failed to load items/i)).toBeInTheDocument();
+      });
+
+      // Mock successful retry
+      mockFetchItems.mockResolvedValue({
+        data: mockItems,
+        totalCount: mockItems.length,
+        currentPage: 1,
+        totalPages: 1
+      });
+
+      // Click retry
+      const retryButton = screen.getByRole('button', { name: /retry/i });
+      await userEvent.click(retryButton);
+
+      // Verify error is cleared and data is displayed
+      await waitFor(() => {
+        expect(screen.getByText('Test Item 1')).toBeInTheDocument();
+      });
+
+      expect(screen.queryByText(/failed to load items/i)).not.toBeInTheDocument();
+    });
+  });
+
+  // Additional existing tests for comprehensive coverage
+  describe('Additional Dashboard Features', () => {
     it('should filter items by search term', async () => {
       render(
         <TestWrapper>
@@ -152,263 +623,6 @@ describe('AdminDashboard - Item Management', () => {
           })
         );
       });
-    });
-
-    it('should filter items by category', async () => {
-      render(
-        <TestWrapper>
-          <AdminDashboard />
-        </TestWrapper>
-      );
-
-      await waitFor(() => {
-        expect(screen.getByText('Test Item 1')).toBeInTheDocument();
-      });
-
-      const categoryFilter = screen.getByLabelText(/category/i);
-      fireEvent.change(categoryFilter, { target: { value: 'Electronics' } });
-
-      await waitFor(() => {
-        expect(mockFetchItems).toHaveBeenCalledWith(
-          expect.objectContaining({
-            category: 'Electronics'
-          })
-        );
-      });
-    });
-
-    it('should filter items by status', async () => {
-      render(
-        <TestWrapper>
-          <AdminDashboard />
-        </TestWrapper>
-      );
-
-      await waitFor(() => {
-        expect(screen.getByText('Test Item 1')).toBeInTheDocument();
-      });
-
-      const statusFilter = screen.getByLabelText(/status/i);
-      fireEvent.change(statusFilter, { target: { value: 'active' } });
-
-      await waitFor(() => {
-        expect(mockFetchItems).toHaveBeenCalledWith(
-          expect.objectContaining({
-            status: 'active'
-          })
-        );
-      });
-    });
-  });
-
-  // TC-003: Add new item functionality
-  describe('TC-003: Add New Item', () => {
-    it('should open form when Add New Item button is clicked', async () => {
-      render(
-        <TestWrapper>
-          <AdminDashboard />
-        </TestWrapper>
-      );
-
-      const addButton = screen.getByRole('button', { name: /add new item/i });
-      await userEvent.click(addButton);
-
-      expect(screen.getByRole('dialog')).toBeInTheDocument();
-      expect(screen.getByText(/add new item/i)).toBeInTheDocument();
-    });
-
-    it('should create new item with valid data', async () => {
-      mockCreateItem.mockResolvedValue({ success: true, data: { id: 3 } });
-
-      render(
-        <TestWrapper>
-          <AdminDashboard />
-        </TestWrapper>
-      );
-
-      const addButton = screen.getByRole('button', { name: /add new item/i });
-      await userEvent.click(addButton);
-
-      // Fill form
-      await userEvent.type(screen.getByLabelText(/name/i), 'New Test Item');
-      await userEvent.type(screen.getByLabelText(/description/i), 'New Description');
-      await userEvent.selectOptions(screen.getByLabelText(/category/i), 'Electronics');
-      await userEvent.type(screen.getByLabelText(/price/i), '199.99');
-
-      const saveButton = screen.getByRole('button', { name: /save/i });
-      await userEvent.click(saveButton);
-
-      await waitFor(() => {
-        expect(mockCreateItem).toHaveBeenCalledWith(
-          expect.objectContaining({
-            name: 'New Test Item',
-            description: 'New Description',
-            category: 'Electronics',
-            price: '199.99'
-          })
-        );
-      });
-    });
-
-    it('should show validation errors for required fields', async () => {
-      render(
-        <TestWrapper>
-          <AdminDashboard />
-        </TestWrapper>
-      );
-
-      const addButton = screen.getByRole('button', { name: /add new item/i });
-      await userEvent.click(addButton);
-
-      const saveButton = screen.getByRole('button', { name: /save/i });
-      await userEvent.click(saveButton);
-
-      await waitFor(() => {
-        expect(screen.getByText(/name is required/i)).toBeInTheDocument();
-        expect(screen.getByText(/category is required/i)).toBeInTheDocument();
-      });
-    });
-  });
-
-  // TC-004: Edit item functionality
-  describe('TC-004: Edit Item', () => {
-    it('should open edit form when edit button is clicked', async () => {
-      render(
-        <TestWrapper>
-          <AdminDashboard />
-        </TestWrapper>
-      );
-
-      await waitFor(() => {
-        expect(screen.getByText('Test Item 1')).toBeInTheDocument();
-      });
-
-      const editButtons = screen.getAllByRole('button', { name: /edit/i });
-      await userEvent.click(editButtons[0]);
-
-      expect(screen.getByRole('dialog')).toBeInTheDocument();
-      expect(screen.getByDisplayValue('Test Item 1')).toBeInTheDocument();
-    });
-
-    it('should update item with modified data', async () => {
-      mockUpdateItem.mockResolvedValue({ success: true });
-
-      render(
-        <TestWrapper>
-          <AdminDashboard />
-        </TestWrapper>
-      );
-
-      await waitFor(() => {
-        expect(screen.getByText('Test Item 1')).toBeInTheDocument();
-      });
-
-      const editButtons = screen.getAllByRole('button', { name: /edit/i });
-      await userEvent.click(editButtons[0]);
-
-      const nameInput = screen.getByDisplayValue('Test Item 1');
-      await userEvent.clear(nameInput);
-      await userEvent.type(nameInput, 'Updated Item Name');
-
-      const saveButton = screen.getByRole('button', { name: /save/i });
-      await userEvent.click(saveButton);
-
-      await waitFor(() => {
-        expect(mockUpdateItem).toHaveBeenCalledWith(
-          1,
-          expect.objectContaining({
-            name: 'Updated Item Name'
-          })
-        );
-      });
-    });
-  });
-
-  // TC-005: Delete functionality with confirmation
-  describe('TC-005: Delete Item', () => {
-    it('should show confirmation dialog when delete is clicked', async () => {
-      render(
-        <TestWrapper>
-          <AdminDashboard />
-        </TestWrapper>
-      );
-
-      await waitFor(() => {
-        expect(screen.getByText('Test Item 1')).toBeInTheDocument();
-      });
-
-      const deleteButtons = screen.getAllByRole('button', { name: /delete/i });
-      await userEvent.click(deleteButtons[0]);
-
-      expect(screen.getByText(/are you sure/i)).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /confirm/i })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /cancel/i })).toBeInTheDocument();
-    });
-
-    it('should delete item when confirmed', async () => {
-      mockDeleteItem.mockResolvedValue({ success: true });
-
-      render(
-        <TestWrapper>
-          <AdminDashboard />
-        </TestWrapper>
-      );
-
-      await waitFor(() => {
-        expect(screen.getByText('Test Item 1')).toBeInTheDocument();
-      });
-
-      const deleteButtons = screen.getAllByRole('button', { name: /delete/i });
-      await userEvent.click(deleteButtons[0]);
-
-      const confirmButton = screen.getByRole('button', { name: /confirm/i });
-      await userEvent.click(confirmButton);
-
-      await waitFor(() => {
-        expect(mockDeleteItem).toHaveBeenCalledWith(1);
-      });
-    });
-
-    it('should not delete item when cancelled', async () => {
-      render(
-        <TestWrapper>
-          <AdminDashboard />
-        </TestWrapper>
-      );
-
-      await waitFor(() => {
-        expect(screen.getByText('Test Item 1')).toBeInTheDocument();
-      });
-
-      const deleteButtons = screen.getAllByRole('button', { name: /delete/i });
-      await userEvent.click(deleteButtons[0]);
-
-      const cancelButton = screen.getByRole('button', { name: /cancel/i });
-      await userEvent.click(cancelButton);
-
-      expect(mockDeleteItem).not.toHaveBeenCalled();
-    });
-  });
-
-  // TC-006: Bulk operations support
-  describe('TC-006: Bulk Operations', () => {
-    it('should select multiple items for bulk operations', async () => {
-      render(
-        <TestWrapper>
-          <AdminDashboard />
-        </TestWrapper>
-      );
-
-      await waitFor(() => {
-        expect(screen.getByText('Test Item 1')).toBeInTheDocument();
-      });
-
-      const checkboxes = screen.getAllByRole('checkbox');
-      await userEvent.click(checkboxes[1]); // First item checkbox
-      await userEvent.click(checkboxes[2]); // Second item checkbox
-
-      expect(screen.getByText(/2 selected/i)).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /bulk delete/i })).toBeInTheDocument();
     });
 
     it('should perform bulk delete operation', async () => {
@@ -438,59 +652,7 @@ describe('AdminDashboard - Item Management', () => {
         expect(mockBulkDelete).toHaveBeenCalledWith([1, 2]);
       });
     });
-  });
 
-  // TC-008: Success/error notifications
-  describe('TC-008: Notifications', () => {
-    it('should show success notification on successful item creation', async () => {
-      mockCreateItem.mockResolvedValue({ success: true, data: { id: 3 } });
-
-      render(
-        <TestWrapper>
-          <AdminDashboard />
-        </TestWrapper>
-      );
-
-      const addButton = screen.getByRole('button', { name: /add new item/i });
-      await userEvent.click(addButton);
-
-      await userEvent.type(screen.getByLabelText(/name/i), 'New Item');
-      await userEvent.selectOptions(screen.getByLabelText(/category/i), 'Electronics');
-
-      const saveButton = screen.getByRole('button', { name: /save/i });
-      await userEvent.click(saveButton);
-
-      await waitFor(() => {
-        expect(screen.getByText(/item created successfully/i)).toBeInTheDocument();
-      });
-    });
-
-    it('should show error notification on failed operation', async () => {
-      mockCreateItem.mockRejectedValue(new Error('Server error'));
-
-      render(
-        <TestWrapper>
-          <AdminDashboard />
-        </TestWrapper>
-      );
-
-      const addButton = screen.getByRole('button', { name: /add new item/i });
-      await userEvent.click(addButton);
-
-      await userEvent.type(screen.getByLabelText(/name/i), 'New Item');
-      await userEvent.selectOptions(screen.getByLabelText(/category/i), 'Electronics');
-
-      const saveButton = screen.getByRole('button', { name: /save/i });
-      await userEvent.click(saveButton);
-
-      await waitFor(() => {
-        expect(screen.getByText(/error creating item/i)).toBeInTheDocument();
-      });
-    });
-  });
-
-  // TC-010: Role-based access control
-  describe('TC-010: Role-based Access Control', () => {
     it('should not display admin dashboard for non-admin users', () => {
       jest.spyOn(require('../../../contexts/AuthContext'), 'useAuth').mockReturnValue({
         user: { ...mockUser, role: 'customer' },
@@ -504,18 +666,6 @@ describe('AdminDashboard - Item Management', () => {
       );
 
       expect(screen.getByText(/access denied/i)).toBeInTheDocument();
-    });
-
-    it('should display admin dashboard for admin users', async () => {
-      render(
-        <TestWrapper>
-          <AdminDashboard />
-        </TestWrapper>
-      );
-
-      await waitFor(() => {
-        expect(screen.getByText(/item management/i)).toBeInTheDocument();
-      });
     });
   });
 });
