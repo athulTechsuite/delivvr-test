@@ -4,19 +4,27 @@
 -- Security Note: old_values and new_values contain sensitive data and should be
 -- encrypted at application level before storage and access-controlled via proper
 -- authentication middleware to ensure only authorized administrators can view audit logs
+-- 
+-- SECURITY REQUIREMENTS:
+-- 1. Application MUST implement AES-256 encryption for old_values and new_values fields
+-- 2. Encryption keys MUST be stored separately from database (environment variables/key management)
+-- 3. Data MUST be encrypted before INSERT/UPDATE operations
+-- 4. Data MUST be decrypted only when accessed by authorized administrators
+-- 5. Consider implementing field-level encryption or use database encryption features
 
 CREATE TABLE IF NOT EXISTS audit_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
     action VARCHAR(20) NOT NULL CHECK (action IN ('CREATE', 'READ', 'UPDATE', 'DELETE')),
-    table_name VARCHAR(50) NOT NULL CHECK (table_name REGEXP '^[a-zA-Z_][a-zA-Z0-9_]*$'),
+    table_name VARCHAR(50) NOT NULL CHECK (LENGTH(table_name) <= 50 AND table_name NOT LIKE '%[^a-zA-Z0-9_]%' AND table_name NOT LIKE '[0-9]%'),
     record_id INTEGER NOT NULL CHECK (record_id > 0),
-    -- These fields contain sensitive data and must be encrypted at application level
+    -- CRITICAL SECURITY: These fields contain sensitive data and MUST be encrypted at application level
+    -- Required: Implement AES-256 encryption before storing any data in these fields
     -- Access should be restricted to authenticated administrators only
     -- SECURITY: These fields must only be populated via parameterized queries
     -- Application layer must validate JSON format and encrypt before storage
-    old_values TEXT CHECK (old_values IS NULL OR (LENGTH(old_values) <= 65535 AND json_valid(old_values))), -- Encrypted JSON data
-    new_values TEXT CHECK (new_values IS NULL OR (LENGTH(new_values) <= 65535 AND json_valid(new_values))), -- Encrypted JSON data
+    old_values TEXT CHECK (old_values IS NULL OR (LENGTH(old_values) <= 65535 AND json_valid(old_values))), -- MUST BE ENCRYPTED JSON data
+    new_values TEXT CHECK (new_values IS NULL OR (LENGTH(new_values) <= 65535 AND json_valid(new_values))), -- MUST BE ENCRYPTED JSON data
     ip_address VARCHAR(45) CHECK (ip_address IS NULL OR LENGTH(ip_address) <= 45),
     user_agent TEXT CHECK (user_agent IS NULL OR LENGTH(user_agent) <= 1000),
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
