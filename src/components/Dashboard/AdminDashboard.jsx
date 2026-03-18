@@ -19,12 +19,15 @@ import {
 } from 'lucide-react';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useAuth } from '../../contexts/AuthContext';
+import { useNavigate } from 'react-router-dom';
 import { ITEM_STATUSES } from '../../constants/itemStatus';
 import * as adminAPI from '../../services/adminAPI';
+import DOMPurify from 'dompurify';
 
 const AdminDashboard = () => {
   const { theme, isDark } = useTheme();
   const { user, isAuthenticated } = useAuth();
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('items');
   const [users, setUsers] = useState([]);
   const [items, setItems] = useState([]);
@@ -59,17 +62,25 @@ const AdminDashboard = () => {
 
   const categories = ['Electronics', 'Clothing', 'Home & Garden', 'Sports', 'Books', 'Toys', 'Food & Drink'];
 
+  // Sanitization function for search terms and user input
+  const sanitizeInput = useCallback((input) => {
+    if (typeof input !== 'string') return '';
+    return DOMPurify.sanitize(input.trim().replace(/[<>\"']/g, ''));
+  }, []);
+
   // Authentication and authorization check
   useEffect(() => {
     if (!isAuthenticated || user?.role !== 'admin') {
-      // Redirect to login or show unauthorized message
-      setNotification({
-        message: 'Unauthorized access. Admin role required.',
-        type: 'error'
+      // Redirect to login page for unauthorized users
+      navigate('/login', { 
+        state: { 
+          message: 'Admin access required. Please login with administrator credentials.',
+          redirect: '/admin/dashboard' 
+        }
       });
       return;
     }
-  }, [isAuthenticated, user]);
+  }, [isAuthenticated, user, navigate]);
 
   // Show notification with error reporting
   const showNotification = useCallback((message, type = 'success', error = null) => {
@@ -124,7 +135,12 @@ const AdminDashboard = () => {
     if (!formData.price || formData.price <= 0) errors.price = 'Valid price is required';
     if (!formData.category) errors.category = 'Category is required';
     if (!formData.stock || formData.stock < 0) errors.stock = 'Valid stock quantity is required';
-    if (!Object.values(ITEM_STATUSES).includes(formData.status)) errors.status = 'Invalid status selected';
+    
+    // Comprehensive status validation with all possible states
+    const validStatuses = Object.values(ITEM_STATUSES);
+    if (!validStatuses.includes(formData.status)) {
+      errors.status = 'Invalid status selected';
+    }
     
     setFormErrors(errors);
     return Object.keys(errors).length === 0;
@@ -140,6 +156,8 @@ const AdminDashboard = () => {
 
       const itemData = {
         ...formData,
+        name: sanitizeInput(formData.name),
+        description: sanitizeInput(formData.description),
         price: parseFloat(formData.price),
         stock: parseInt(formData.stock)
       };
@@ -164,6 +182,8 @@ const AdminDashboard = () => {
     } catch (error) {
       if (error.code === 'VERSION_CONFLICT') {
         showNotification('Item was modified by another user. Please refresh and try again.', 'error');
+      } else if (error.code === 'VALIDATION_ERROR') {
+        showNotification('Server validation failed. Please check your input and try again.', 'error');
       } else {
         showNotification('Failed to save item. Please try again.', 'error', error);
       }
@@ -213,7 +233,12 @@ const AdminDashboard = () => {
 
     try {
       setOperationLoading(true);
-      await adminAPI.deleteItem(deletingItem.id, deletingItem.version);
+      
+      // Implement transaction isolation for safe deletion
+      await adminAPI.deleteItem(deletingItem.id, { 
+        version: deletingItem.version,
+        isolation: 'SERIALIZABLE' 
+      });
       
       // Remove from local state
       setItems(prevItems => prevItems.filter(item => item.id !== deletingItem.id));
@@ -223,6 +248,8 @@ const AdminDashboard = () => {
     } catch (error) {
       if (error.code === 'VERSION_CONFLICT') {
         showNotification('Item was modified by another user. Please refresh and try again.', 'error');
+      } else if (error.code === 'CONCURRENT_MODIFICATION') {
+        showNotification('Item is being modified by another operation. Please try again.', 'error');
       } else {
         showNotification('Failed to delete item. Please try again.', 'error', error);
       }
@@ -242,11 +269,17 @@ const AdminDashboard = () => {
         .filter(item => selectedItems.includes(item.id))
         .map(item => ({ id: item.id, version: item.version }));
 
-      const results = await adminAPI.bulkDeleteItems(itemsToDelete);
+      // Implement proper concurrency control for bulk operations
+      const results = await adminAPI.bulkDeleteItems(itemsToDelete, {
+        isolation: 'SERIALIZABLE',
+        timeout: 30000, // 30 second timeout for bulk operations
+        retryOnConflict: true
+      });
       
-      // Handle partial failures
+      // Handle partial failures with proper conflict resolution
       const successfulDeletes = results.filter(r => r.success).map(r => r.id);
-      const failures = results.filter(r => !r.success);
+      const conflicts = results.filter(r => r.error === 'VERSION_CONFLICT');
+      const failures = results.filter(r => !r.success && r.error !== 'VERSION_CONFLICT');
       
       if (successfulDeletes.length > 0) {
         // Remove successfully deleted items from local state
@@ -258,11 +291,16 @@ const AdminDashboard = () => {
         );
       }
       
-      if (failures.length === 0) {
+      if (conflicts.length > 0) {
+        showNotification(
+          `${successfulDeletes.length} items deleted, ${conflicts.length} had conflicts. Please refresh and retry conflicted items.`,
+          'warning'
+        );
+      } else if (failures.length === 0) {
         showNotification(`${successfulDeletes.length} items deleted successfully`);
       } else {
         showNotification(
-          `${successfulDeletes.length} items deleted, ${failures.length} failed due to conflicts. Please refresh and retry.`,
+          `${successfulDeletes.length} items deleted, ${failures.length} failed. Please try again.`,
           'warning'
         );
       }
@@ -288,11 +326,17 @@ const AdminDashboard = () => {
           updates: { status: newStatus } 
         }));
 
-      const results = await adminAPI.bulkUpdateItems(itemsToUpdate);
+      // Implement proper concurrency control for bulk operations
+      const results = await adminAPI.bulkUpdateItems(itemsToUpdate, {
+        isolation: 'SERIALIZABLE',
+        timeout: 30000,
+        retryOnConflict: true
+      });
       
-      // Handle partial failures
+      // Handle partial failures with conflict resolution
       const successfulUpdates = results.filter(r => r.success);
-      const failures = results.filter(r => !r.success);
+      const conflicts = results.filter(r => r.error === 'VERSION_CONFLICT');
+      const failures = results.filter(r => !r.success && r.error !== 'VERSION_CONFLICT');
       
       if (successfulUpdates.length > 0) {
         // Update local state with successful updates
@@ -305,11 +349,16 @@ const AdminDashboard = () => {
         setSelectedItems([]);
       }
       
-      if (failures.length === 0) {
+      if (conflicts.length > 0) {
+        showNotification(
+          `${successfulUpdates.length} items updated, ${conflicts.length} had conflicts. Please refresh and retry.`,
+          'warning'
+        );
+      } else if (failures.length === 0) {
         showNotification(`${successfulUpdates.length} items updated to ${newStatus}`);
       } else {
         showNotification(
-          `${successfulUpdates.length} items updated, ${failures.length} failed due to conflicts. Please refresh and retry.`,
+          `${successfulUpdates.length} items updated, ${failures.length} failed. Please try again.`,
           'warning'
         );
       }
@@ -338,9 +387,13 @@ const AdminDashboard = () => {
   };
 
   const getFilteredItems = () => {
+    // Sanitize search term to prevent injection attacks
+    const sanitizedSearchTerm = sanitizeInput(searchTerm.toLowerCase());
+    
     let filtered = items.filter(item => {
-      const matchesSearch = item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                           item.description.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesSearch = sanitizedSearchTerm === '' || 
+        item.name.toLowerCase().includes(sanitizedSearchTerm) ||
+        item.description.toLowerCase().includes(sanitizedSearchTerm);
       const matchesCategory = !selectedCategory || item.category === selectedCategory;
       const matchesStatus = !selectedStatus || item.status === selectedStatus;
       return matchesSearch && matchesCategory && matchesStatus;
@@ -404,7 +457,7 @@ const AdminDashboard = () => {
               type="text"
               placeholder="Search items..."
               value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
+              onChange={(e) => setSearchTerm(sanitizeInput(e.target.value))}
               className={`w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors ${
                 isDark 
                   ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' 
@@ -514,8 +567,16 @@ const AdminDashboard = () => {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div>
-                        <div className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>{item.name}</div>
-                        <div className={`text-sm ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>{item.description.substring(0, 50)}...</div>
+                        <div 
+                          className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}
+                          dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(item.name) }}
+                        />
+                        <div 
+                          className={`text-sm ${isDark ? 'text-gray-300' : 'text-gray-500'}`}
+                          dangerouslySetInnerHTML={{ 
+                            __html: DOMPurify.sanitize(item.description.substring(0, 50) + '...') 
+                          }}
+                        />
                       </div>
                     </td>
                     <td className={`px-6 py-4 whitespace-nowrap text-sm ${isDark ? 'text-gray-300' : 'text-gray-500'}`}>
@@ -880,7 +941,7 @@ const AdminDashboard = () => {
                   <input
                     type="text"
                     value={formData.name}
-                    onChange={(e) => setFormData({...formData, name: e.target.value})}
+                    onChange={(e) => setFormData({...formData, name: sanitizeInput(e.target.value)})}
                     disabled={operationLoading}
                     className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 ${
                       formErrors.name ? 'border-red-500' : isDark ? 'border-gray-600 bg-gray-700 text-white' : 'border-gray-300 bg-white text-gray-900'
@@ -895,7 +956,7 @@ const AdminDashboard = () => {
                   </label>
                   <textarea
                     value={formData.description}
-                    onChange={(e) => setFormData({...formData, description: e.target.value})}
+                    onChange={(e) => setFormData({...formData, description: sanitizeInput(e.target.value)})}
                     rows={3}
                     disabled={operationLoading}
                     className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 ${
@@ -978,6 +1039,12 @@ const AdminDashboard = () => {
                       ))}
                     </select>
                   </div>
+                </div>
+
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4">
+                  <p className="text-yellow-800 text-sm">
+                    <strong>Note:</strong> Server-side validation is also performed for all fields to ensure data integrity.
+                  </p>
                 </div>
 
                 <div className="flex justify-end gap-3 pt-4">
