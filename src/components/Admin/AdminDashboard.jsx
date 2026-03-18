@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   Box, 
   Container, 
@@ -49,12 +49,61 @@ import ItemForm from './ItemForm';
 import ImageUpload from './ImageUpload';
 import './AdminDashboard.css';
 
+// Status enum constants - fetched from API or shared constants
+export const ITEM_STATUS = {
+  ACTIVE: 'active',
+  INACTIVE: 'inactive',
+  DRAFT: 'draft'
+};
+
+// Input sanitization utility
+const sanitizeInput = (input) => {
+  if (typeof input !== 'string') return input;
+  return input
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+    .replace(/[<>'"]/g, '')
+    .trim()
+    .substring(0, 255);
+};
+
+// Form validation utility
+const validateFormData = (formData) => {
+  const errors = [];
+  
+  if (!formData.name || formData.name.trim().length < 2) {
+    errors.push('Item name must be at least 2 characters long');
+  }
+  
+  if (!formData.description || formData.description.trim().length < 10) {
+    errors.push('Description must be at least 10 characters long');
+  }
+  
+  if (!formData.price || formData.price <= 0) {
+    errors.push('Price must be greater than 0');
+  }
+  
+  if (!formData.category || !formData.category.trim()) {
+    errors.push('Category is required');
+  }
+  
+  if (!formData.status || !Object.values(ITEM_STATUS).includes(formData.status)) {
+    errors.push('Valid status is required');
+  }
+  
+  return errors;
+};
+
 const AdminDashboard = () => {
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, token, checkPermission } = useAuth();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [validStatuses, setValidStatuses] = useState(Object.values(ITEM_STATUS));
+  
+  // Operation queue for concurrent operations
+  const operationQueueRef = useRef([]);
+  const isProcessingRef = useRef(false);
   
   // Pagination
   const [currentPage, setCurrentPage] = useState(1);
@@ -74,25 +123,88 @@ const AdminDashboard = () => {
   const [selectedItem, setSelectedItem] = useState(null);
   const [formMode, setFormMode] = useState('create'); // 'create' or 'edit'
 
+  // Validate admin permissions with token verification
+  const validateAdminAccess = useCallback(async () => {
+    if (!isAdmin || !token) {
+      return false;
+    }
+    
+    try {
+      // Verify token and admin permissions with backend
+      const hasPermission = await checkPermission('admin.dashboard.access');
+      return hasPermission;
+    } catch (err) {
+      console.error('Permission validation failed:', err);
+      return false;
+    }
+  }, [isAdmin, token, checkPermission]);
+
+  // Fetch valid statuses from API
+  const fetchValidStatuses = useCallback(async () => {
+    try {
+      const response = await itemsAPI.getItemStatuses();
+      if (response.data && Array.isArray(response.data)) {
+        setValidStatuses(response.data);
+      }
+    } catch (err) {
+      console.warn('Failed to fetch valid statuses, using defaults:', err);
+      setValidStatuses(Object.values(ITEM_STATUS));
+    }
+  }, []);
+
+  // Process operation queue to handle concurrent operations
+  const processOperationQueue = useCallback(async () => {
+    if (isProcessingRef.current || operationQueueRef.current.length === 0) {
+      return;
+    }
+    
+    isProcessingRef.current = true;
+    
+    while (operationQueueRef.current.length > 0) {
+      const operation = operationQueueRef.current.shift();
+      try {
+        await operation();
+      } catch (err) {
+        console.error('Operation failed:', err);
+      }
+    }
+    
+    isProcessingRef.current = false;
+  }, []);
+
   // Fetch items with pagination and filters
   const fetchItems = useCallback(async () => {
     try {
       setLoading(true);
+      setError('');
+      
+      // Sanitize inputs before sending to API
       const params = {
         page: currentPage,
         limit: itemsPerPage,
-        search: searchQuery,
-        category: categoryFilter,
-        status: statusFilter
+        search: sanitizeInput(searchQuery),
+        category: sanitizeInput(categoryFilter),
+        status: sanitizeInput(statusFilter)
       };
       
       const response = await itemsAPI.getItems(params);
-      setItems(response.data.items);
-      setTotalPages(response.data.totalPages);
-      setTotalItems(response.data.totalItems);
+      
+      if (!response.data) {
+        throw new Error('Invalid response format');
+      }
+      
+      setItems(response.data.items || []);
+      setTotalPages(response.data.totalPages || 1);
+      setTotalItems(response.data.totalItems || 0);
     } catch (err) {
-      setError('Failed to fetch items');
+      const errorMessage = err.response?.data?.message || 'Failed to fetch items. Please check your connection and try again.';
+      setError(errorMessage);
       console.error('Fetch items error:', err);
+      
+      // Set fallback data
+      setItems([]);
+      setTotalPages(1);
+      setTotalItems(0);
     } finally {
       setLoading(false);
     }
@@ -102,18 +214,32 @@ const AdminDashboard = () => {
   const fetchCategories = useCallback(async () => {
     try {
       const response = await itemsAPI.getCategories();
+      
+      if (!response.data) {
+        throw new Error('Invalid categories response');
+      }
+      
       setCategories(response.data);
     } catch (err) {
+      const errorMessage = err.response?.data?.message || 'Failed to fetch categories';
       console.error('Failed to fetch categories:', err);
+      setError(errorMessage);
+      setCategories([]);
     }
   }, []);
 
   useEffect(() => {
-    if (isAdmin) {
-      fetchItems();
-      fetchCategories();
-    }
-  }, [isAdmin, fetchItems, fetchCategories]);
+    const initializeDashboard = async () => {
+      const hasAccess = await validateAdminAccess();
+      if (hasAccess) {
+        fetchItems();
+        fetchCategories();
+        fetchValidStatuses();
+      }
+    };
+    
+    initializeDashboard();
+  }, [validateAdminAccess, fetchItems, fetchCategories, fetchValidStatuses]);
 
   // Handle search with debouncing
   useEffect(() => {
@@ -128,10 +254,12 @@ const AdminDashboard = () => {
   // Handle filter changes
   const handleFilterChange = (filterType, value) => {
     setCurrentPage(1);
+    const sanitizedValue = sanitizeInput(value);
+    
     if (filterType === 'category') {
-      setCategoryFilter(value);
+      setCategoryFilter(sanitizedValue);
     } else if (filterType === 'status') {
-      setStatusFilter(value);
+      setStatusFilter(sanitizedValue);
     }
   };
 
@@ -141,58 +269,116 @@ const AdminDashboard = () => {
   };
 
   // Handle create item
-  const handleCreateItem = () => {
+  const handleCreateItem = async () => {
+    const hasPermission = await checkPermission('admin.items.create');
+    if (!hasPermission) {
+      setError('Insufficient permissions to create items');
+      return;
+    }
+    
     setSelectedItem(null);
     setFormMode('create');
     setOpenItemForm(true);
   };
 
   // Handle edit item
-  const handleEditItem = (item) => {
+  const handleEditItem = async (item) => {
+    const hasPermission = await checkPermission('admin.items.update');
+    if (!hasPermission) {
+      setError('Insufficient permissions to edit items');
+      return;
+    }
+    
     setSelectedItem(item);
     setFormMode('edit');
     setOpenItemForm(true);
   };
 
-  // Handle delete item
-  const handleDeleteItem = (item) => {
+  // Handle delete item with operation queuing
+  const handleDeleteItem = async (item) => {
+    const hasPermission = await checkPermission('admin.items.delete');
+    if (!hasPermission) {
+      setError('Insufficient permissions to delete items');
+      return;
+    }
+    
     setSelectedItem(item);
     setOpenDeleteDialog(true);
   };
 
-  // Confirm delete
+  // Confirm delete with optimistic locking
   const confirmDelete = async () => {
-    try {
-      setLoading(true);
-      await itemsAPI.deleteItem(selectedItem.id);
-      setSuccess('Item deleted successfully');
-      fetchItems();
-      setOpenDeleteDialog(false);
-      setSelectedItem(null);
-    } catch (err) {
-      setError('Failed to delete item');
-      console.error('Delete item error:', err);
-    } finally {
-      setLoading(false);
-    }
+    if (!selectedItem) return;
+    
+    const deleteOperation = async () => {
+      try {
+        setLoading(true);
+        await itemsAPI.deleteItem(selectedItem.id, { 
+          version: selectedItem.version // Include version for optimistic locking
+        });
+        setSuccess('Item deleted successfully');
+        await fetchItems();
+        setOpenDeleteDialog(false);
+        setSelectedItem(null);
+      } catch (err) {
+        const errorMessage = err.response?.data?.message || 'Failed to delete item. Please try again.';
+        setError(errorMessage);
+        console.error('Delete item error:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    // Add to operation queue to handle concurrent deletes
+    operationQueueRef.current.push(deleteOperation);
+    await processOperationQueue();
   };
 
-  // Handle form submit
+  // Handle form submit with validation
   const handleFormSubmit = async (formData) => {
     try {
       setLoading(true);
+      setError('');
+      
+      // Validate form data
+      const validationErrors = validateFormData(formData);
+      if (validationErrors.length > 0) {
+        setError(validationErrors.join(', '));
+        return;
+      }
+      
+      // Sanitize form data
+      const sanitizedData = {
+        ...formData,
+        name: sanitizeInput(formData.name),
+        description: sanitizeInput(formData.description),
+        category: sanitizeInput(formData.category),
+        status: sanitizeInput(formData.status)
+      };
+      
+      // Validate status against backend schema
+      if (!validStatuses.includes(sanitizedData.status)) {
+        setError('Invalid status value');
+        return;
+      }
+      
       if (formMode === 'create') {
-        await itemsAPI.createItem(formData);
+        await itemsAPI.createItem(sanitizedData);
         setSuccess('Item created successfully');
       } else {
-        await itemsAPI.updateItem(selectedItem.id, formData);
+        await itemsAPI.updateItem(selectedItem.id, {
+          ...sanitizedData,
+          version: selectedItem.version // Include version for optimistic locking
+        });
         setSuccess('Item updated successfully');
       }
-      fetchItems();
+      
+      await fetchItems();
       setOpenItemForm(false);
       setSelectedItem(null);
     } catch (err) {
-      setError(`Failed to ${formMode} item`);
+      const errorMessage = err.response?.data?.message || `Failed to ${formMode} item. Please check your input and try again.`;
+      setError(errorMessage);
       console.error(`${formMode} item error:`, err);
     } finally {
       setLoading(false);
@@ -208,11 +394,11 @@ const AdminDashboard = () => {
   // Get status color
   const getStatusColor = (status) => {
     switch (status?.toLowerCase()) {
-      case 'active':
+      case ITEM_STATUS.ACTIVE:
         return 'success';
-      case 'inactive':
+      case ITEM_STATUS.INACTIVE:
         return 'error';
-      case 'draft':
+      case ITEM_STATUS.DRAFT:
         return 'warning';
       default:
         return 'default';
@@ -227,11 +413,12 @@ const AdminDashboard = () => {
     }).format(amount);
   };
 
-  if (!isAdmin) {
+  // Enhanced admin check with backend verification
+  if (!isAdmin || !token) {
     return (
       <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
         <Alert severity="error">
-          Access denied. Administrator privileges required.
+          Access denied. Administrator authentication required.
         </Alert>
       </Container>
     );
@@ -288,7 +475,7 @@ const AdminDashboard = () => {
                   Active Items
                 </Typography>
                 <Typography variant="h4">
-                  {items.filter(item => item.status === 'active').length}
+                  {items.filter(item => item.status === ITEM_STATUS.ACTIVE).length}
                 </Typography>
               </CardContent>
             </Card>
@@ -300,7 +487,7 @@ const AdminDashboard = () => {
                   Draft Items
                 </Typography>
                 <Typography variant="h4">
-                  {items.filter(item => item.status === 'draft').length}
+                  {items.filter(item => item.status === ITEM_STATUS.DRAFT).length}
                 </Typography>
               </CardContent>
             </Card>
@@ -352,9 +539,11 @@ const AdminDashboard = () => {
                     onChange={(e) => handleFilterChange('status', e.target.value)}
                   >
                     <MenuItem value="">All Status</MenuItem>
-                    <MenuItem value="active">Active</MenuItem>
-                    <MenuItem value="inactive">Inactive</MenuItem>
-                    <MenuItem value="draft">Draft</MenuItem>
+                    {validStatuses.map((status) => (
+                      <MenuItem key={status} value={status}>
+                        {status.charAt(0).toUpperCase() + status.slice(1)}
+                      </MenuItem>
+                    ))}
                   </Select>
                 </FormControl>
               </Grid>
@@ -520,6 +709,7 @@ const AdminDashboard = () => {
             item={selectedItem}
             mode={formMode}
             categories={categories}
+            validStatuses={validStatuses}
             onSubmit={handleFormSubmit}
             onCancel={() => setOpenItemForm(false)}
           />
