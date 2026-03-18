@@ -26,9 +26,20 @@ const ItemActions = ({
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
-  const { user } = useAuth();
+  const { user, token } = useAuth();
+
+  // Validate authentication token before API calls
+  const validateAuth = () => {
+    if (!token) {
+      toast.error('Authentication required. Please log in again.');
+      return false;
+    }
+    return true;
+  };
 
   const handleDelete = async () => {
+    if (!validateAuth()) return;
+    
     setIsDeleting(true);
     try {
       await itemsAPI.deleteItem(item.id);
@@ -37,13 +48,19 @@ const ItemActions = ({
       setShowDeleteModal(false);
     } catch (error) {
       console.error('Error deleting item:', error);
-      toast.error('Failed to delete item. Please try again.');
+      if (error.response?.status === 401) {
+        toast.error('Authentication expired. Please log in again.');
+      } else {
+        toast.error('Failed to delete item. Please try again.');
+      }
     } finally {
       setIsDeleting(false);
     }
   };
 
   const handleStatusToggle = async () => {
+    if (!validateAuth()) return;
+    
     setIsUpdatingStatus(true);
     try {
       const newStatus = item.status === 'active' ? 'archived' : 'active';
@@ -52,13 +69,19 @@ const ItemActions = ({
       onStatusChange(item.id, newStatus);
     } catch (error) {
       console.error('Error updating item status:', error);
-      toast.error('Failed to update item status. Please try again.');
+      if (error.response?.status === 401) {
+        toast.error('Authentication expired. Please log in again.');
+      } else {
+        toast.error('Failed to update item status. Please try again.');
+      }
     } finally {
       setIsUpdatingStatus(false);
     }
   };
 
   const handleDuplicate = async () => {
+    if (!validateAuth()) return;
+    
     try {
       const duplicatedItem = {
         ...item,
@@ -73,7 +96,11 @@ const ItemActions = ({
       onDuplicate(newItem);
     } catch (error) {
       console.error('Error duplicating item:', error);
-      toast.error('Failed to duplicate item. Please try again.');
+      if (error.response?.status === 401) {
+        toast.error('Authentication expired. Please log in again.');
+      } else {
+        toast.error('Failed to duplicate item. Please try again.');
+      }
     }
     setShowDropdown(false);
   };
