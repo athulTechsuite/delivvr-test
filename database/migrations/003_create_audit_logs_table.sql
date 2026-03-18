@@ -1,6 +1,9 @@
 -- Migration: Create audit_logs table
 -- Description: Track all CRUD operations on items for audit purposes
 -- Created: 2024
+-- Security Note: old_values and new_values contain sensitive data and should be
+-- encrypted at application level before storage and access-controlled via proper
+-- authentication middleware to ensure only authorized administrators can view audit logs
 
 CREATE TABLE IF NOT EXISTS audit_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -8,8 +11,10 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     action VARCHAR(20) NOT NULL,
     table_name VARCHAR(50) NOT NULL,
     record_id INTEGER NOT NULL,
-    old_values TEXT,
-    new_values TEXT,
+    -- These fields contain sensitive data and must be encrypted at application level
+    -- Access should be restricted to authenticated administrators only
+    old_values TEXT, -- Encrypted sensitive data
+    new_values TEXT, -- Encrypted sensitive data
     ip_address VARCHAR(45),
     user_agent TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
