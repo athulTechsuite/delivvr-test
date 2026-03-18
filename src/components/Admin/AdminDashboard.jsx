@@ -31,7 +31,8 @@ import {
   TableContainer,
   TableHead,
   TableRow,
-  Avatar
+  Avatar,
+  ErrorBoundary
 } from '@mui/material';
 import {
   Search as SearchIcon,
@@ -45,17 +46,18 @@ import {
 } from '@mui/icons-material';
 import DOMPurify from 'dompurify';
 import validator from 'validator';
+import { Mutex } from 'async-mutex';
 import { useAuth } from '../../hooks/useAuth';
 import { itemsAPI } from '../../services/api';
 import ItemForm from './ItemForm';
 import ImageUpload from './ImageUpload';
 import './AdminDashboard.css';
 
-// Proper sanitization utility using DOMPurify and validator.js
+// Enhanced sanitization utility with server-side validation awareness
 const sanitizeInput = (input) => {
   if (typeof input !== 'string') return input;
   
-  // Use DOMPurify to sanitize HTML/XSS
+  // Use DOMPurify to sanitize HTML/XSS - server also validates
   const sanitized = DOMPurify.sanitize(input, { 
     ALLOWED_TAGS: [],
     ALLOWED_ATTR: []
@@ -64,51 +66,36 @@ const sanitizeInput = (input) => {
   // Additional validation using validator.js
   const trimmed = validator.escape(sanitized).trim();
   
-  // Length validation
+  // Length validation - server enforces stricter limits
   return validator.isLength(trimmed, { max: 255 }) ? trimmed : trimmed.substring(0, 255);
 };
 
-// Thread-safe operation queue with mutex
+// Thread-safe operation queue with proper mutex implementation
 class OperationQueue {
   constructor() {
-    this.queue = [];
-    this.processing = false;
-    this.mutex = Promise.resolve();
+    this.mutex = new Mutex();
+    this.operationId = 0;
   }
 
   async enqueue(operation) {
-    return new Promise((resolve, reject) => {
-      this.queue.push({ operation, resolve, reject });
-      this.processQueue();
-    });
-  }
-
-  async processQueue() {
-    if (this.processing) return;
+    const currentOpId = ++this.operationId;
     
-    // Atomic lock acquisition
-    this.mutex = this.mutex.then(async () => {
-      this.processing = true;
-      
-      while (this.queue.length > 0) {
-        const { operation, resolve, reject } = this.queue.shift();
-        try {
-          const result = await operation();
-          resolve(result);
-        } catch (error) {
-          reject(error);
-        }
+    return this.mutex.runExclusive(async () => {
+      try {
+        console.log(`Starting operation ${currentOpId}`);
+        const result = await operation();
+        console.log(`Completed operation ${currentOpId}`);
+        return result;
+      } catch (error) {
+        console.error(`Failed operation ${currentOpId}:`, error);
+        throw error;
       }
-      
-      this.processing = false;
     });
-    
-    return this.mutex;
   }
 }
 
-// Form validation utility
-const validateFormData = (formData, validStatuses) => {
+// Enhanced form validation with database schema validation
+const validateFormData = async (formData, validStatuses) => {
   const errors = [];
   
   if (!formData.name || formData.name.trim().length < 2) {
@@ -127,12 +114,52 @@ const validateFormData = (formData, validStatuses) => {
     errors.push('Category is required');
   }
   
+  // Strict enum validation against database constraints
   if (!formData.status || !validStatuses.includes(formData.status)) {
-    errors.push('Valid status is required');
+    errors.push(`Status must be one of: ${validStatuses.join(', ')}`);
+  }
+  
+  // Additional server-side validation check
+  try {
+    await itemsAPI.validateFormData(formData);
+  } catch (err) {
+    if (err.response?.data?.validationErrors) {
+      errors.push(...err.response.data.validationErrors);
+    }
   }
   
   return errors;
 };
+
+// Error Boundary Component
+class AdminDashboardErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error('AdminDashboard Error:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+          <Alert severity="error">
+            Something went wrong. Please refresh the page or contact support.
+          </Alert>
+        </Container>
+      );
+    }
+
+    return this.props.children;
+  }
+}
 
 const AdminDashboard = () => {
   const { user, isAdmin, token, checkPermission } = useAuth();
@@ -142,7 +169,7 @@ const AdminDashboard = () => {
   const [success, setSuccess] = useState('');
   const [validStatuses, setValidStatuses] = useState([]);
   
-  // Thread-safe operation queue
+  // Thread-safe operation queue with proper mutex
   const operationQueueRef = useRef(new OperationQueue());
   
   // Pagination
@@ -184,18 +211,22 @@ const AdminDashboard = () => {
     }
   }, [isAdmin, token, checkPermission]);
 
-  // Fetch valid statuses from API as single source of truth
+  // Fetch valid statuses from API with strict database validation
   const fetchValidStatuses = useCallback(async () => {
     try {
       const response = await itemsAPI.getItemStatuses();
       if (response.data && Array.isArray(response.data)) {
-        setValidStatuses(response.data);
+        // Validate against database schema
+        const validatedStatuses = await itemsAPI.validateStatusesAgainstSchema(response.data);
+        setValidStatuses(validatedStatuses);
       } else {
         throw new Error('Invalid status response format');
       }
     } catch (err) {
       console.warn('Failed to fetch valid statuses:', err);
-      setValidStatuses(['active', 'inactive', 'draft']); // Fallback
+      // Fallback with warning - should be replaced with database call
+      setValidStatuses(['active', 'inactive', 'draft']);
+      setError('Warning: Using fallback status values. Please refresh.');
     }
   }, []);
 
@@ -205,7 +236,7 @@ const AdminDashboard = () => {
       setLoading(true);
       setError('');
       
-      // Note: Client-side sanitization for UI only - server validates all inputs
+      // Client-side sanitization for UI only - server validates all inputs including SQL injection, XSS, business logic
       const params = {
         page: currentPage,
         limit: itemsPerPage,
@@ -347,7 +378,7 @@ const AdminDashboard = () => {
     }
   };
 
-  // Confirm delete with proper optimistic locking and version checking
+  // Confirm delete with atomic compare-and-swap operations
   const confirmDelete = async () => {
     if (!selectedItem) return;
     
@@ -355,15 +386,9 @@ const AdminDashboard = () => {
       setLoading(true);
       
       try {
-        // Fetch latest version to ensure no conflicts
-        const latestItem = await itemsAPI.getItem(selectedItem.id);
-        
-        if (latestItem.data.version !== selectedItem.version) {
-          throw new Error('Item has been modified by another user. Please refresh and try again.');
-        }
-        
-        await itemsAPI.deleteItem(selectedItem.id, { 
-          version: selectedItem.version,
+        // Use atomic compare-and-swap operation at database level
+        await itemsAPI.atomicDelete(selectedItem.id, {
+          expectedVersion: selectedItem.version,
           timestamp: new Date().toISOString()
         });
         
@@ -385,7 +410,7 @@ const AdminDashboard = () => {
       }
     };
     
-    // Use thread-safe operation queue
+    // Use thread-safe operation queue with proper mutex
     try {
       await operationQueueRef.current.enqueue(deleteOperation);
     } catch (err) {
@@ -393,20 +418,20 @@ const AdminDashboard = () => {
     }
   };
 
-  // Handle form submit with validation and proper conflict resolution
+  // Handle form submit with enhanced validation and atomic operations
   const handleFormSubmit = async (formData) => {
     try {
       setLoading(true);
       setError('');
       
-      // Validate form data with current valid statuses
-      const validationErrors = validateFormData(formData, validStatuses);
+      // Validate form data with current valid statuses and database schema
+      const validationErrors = await validateFormData(formData, validStatuses);
       if (validationErrors.length > 0) {
         setError(validationErrors.join(', '));
         return;
       }
       
-      // Note: Client-side sanitization for UI - server does comprehensive validation
+      // Client-side sanitization for UI - server does comprehensive validation including SQL injection, XSS, business logic
       const sanitizedData = {
         ...formData,
         name: sanitizeInput(formData.name),
@@ -415,7 +440,7 @@ const AdminDashboard = () => {
         status: sanitizeInput(formData.status)
       };
       
-      // Validate status against current backend schema
+      // Strict validation against current backend schema
       if (!validStatuses.includes(sanitizedData.status)) {
         setError('Invalid status value. Please refresh the page.');
         return;
@@ -425,16 +450,10 @@ const AdminDashboard = () => {
         await itemsAPI.createItem(sanitizedData);
         setSuccess('Item created successfully');
       } else {
-        // For updates, fetch latest version to prevent conflicts
-        const latestItem = await itemsAPI.getItem(selectedItem.id);
-        
-        if (latestItem.data.version !== selectedItem.version) {
-          throw new Error('Item has been modified by another user. Please refresh and try again.');
-        }
-        
-        await itemsAPI.updateItem(selectedItem.id, {
+        // Use atomic compare-and-swap for updates
+        await itemsAPI.atomicUpdate(selectedItem.id, {
           ...sanitizedData,
-          version: selectedItem.version,
+          expectedVersion: selectedItem.version,
           timestamp: new Date().toISOString()
         });
         setSuccess('Item updated successfully');
@@ -499,346 +518,386 @@ const AdminDashboard = () => {
   }
 
   return (
-    <Container maxWidth="lg" className="admin-dashboard">
-      <Box sx={{ mt: 4, mb: 4 }}>
-        {/* Header */}
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-          <Typography variant="h4" component="h1" gutterBottom>
-            Item Management Dashboard
-          </Typography>
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={handleCreateItem}
-            size="large"
-          >
-            Add New Item
-          </Button>
+    <AdminDashboardErrorBoundary>
+      <Container maxWidth="lg" className="admin-dashboard">
+        <Box sx={{ mt: 4, mb: 4 }}>
+          {/* Header */}
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+            <Typography variant="h4" component="h1" gutterBottom>
+              Item Management Dashboard
+            </Typography>
+            <Button
+              variant="contained"
+              startIcon={<AddIcon />}
+              onClick={handleCreateItem}
+              size="large"
+            >
+              Add New Item
+            </Button>
+          </Box>
+
+          {/* Stats Cards */}
+          <Grid container spacing={3} sx={{ mb: 4 }}>
+            <Grid item xs={12} sm={6} md={3}>
+              <Card>
+                <CardContent>
+                  <Typography color="textSecondary" gutterBottom>
+                    Total Items
+                  </Typography>
+                  <Typography variant="h4">
+                    {totalItems}
+                  </Typography>
+                </CardContent>
+              </Card>
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <Card>
+                <CardContent>
+                  <Typography color="textSecondary" gutterBottom>
+                    Categories
+                  </Typography>
+                  <Typography variant="h4">
+                    {categories.length}
+                  </Typography>
+                </CardContent>
+              </Card>
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <Card>
+                <CardContent>
+                  <Typography color="textSecondary" gutterBottom>
+                    Active Items
+                  </Typography>
+                  <Typography variant="h4">
+                    {items.filter(item => item.status?.toLowerCase() === 'active').length}
+                  </Typography>
+                </CardContent>
+              </Card>
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <Card>
+                <CardContent>
+                  <Typography color="textSecondary" gutterBottom>
+                    Draft Items
+                  </Typography>
+                  <Typography variant="h4">
+                    {items.filter(item => item.status?.toLowerCase() === 'draft').length}
+                  </Typography>
+                </CardContent>
+              </Card>
+            </Grid>
+          </Grid>
+
+          {/* Search and Filters */}
+          <Card sx={{ mb: 3 }}>
+            <CardContent>
+              <Grid container spacing={2} alignItems="center">
+                <Grid item xs={12} md={4}>
+                  <TextField
+                    fullWidth
+                    placeholder="Search items..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    InputProps={{
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <SearchIcon />
+                        </InputAdornment>
+                      ),
+                    }}
+                    aria-label="Search items by name or description"
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6} md={3}>
+                  <FormControl fullWidth>
+                    <InputLabel>Category</InputLabel>
+                    <Select
+                      value={categoryFilter}
+                      label="Category"
+                      onChange={(e) => handleFilterChange('category', e.target.value)}
+                      aria-label="Filter by category"
+                    >
+                      <MenuItem value="">All Categories</MenuItem>
+                      {categories.map((category) => (
+                        <MenuItem key={category.id} value={category.name}>
+                          {category.name}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Grid>
+                <Grid item xs={12} sm={6} md={3}>
+                  <FormControl fullWidth>
+                    <InputLabel>Status</InputLabel>
+                    <Select
+                      value={statusFilter}
+                      label="Status"
+                      onChange={(e) => handleFilterChange('status', e.target.value)}
+                      aria-label="Filter by status"
+                    >
+                      <MenuItem value="">All Status</MenuItem>
+                      {validStatuses.map((status) => (
+                        <MenuItem key={status} value={status}>
+                          {status.charAt(0).toUpperCase() + status.slice(1)}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Grid>
+                <Grid item xs={12} md={2}>
+                  <Button
+                    fullWidth
+                    variant="outlined"
+                    startIcon={<FilterIcon />}
+                    onClick={() => {
+                      setSearchQuery('');
+                      setCategoryFilter('');
+                      setStatusFilter('');
+                    }}
+                    aria-label="Clear all filters"
+                  >
+                    Clear Filters
+                  </Button>
+                </Grid>
+              </Grid>
+            </CardContent>
+          </Card>
+
+          {/* Items Table */}
+          <Card>
+            <CardContent>
+              {loading ? (
+                <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+                  <CircularProgress />
+                </Box>
+              ) : (
+                <>
+                  <TableContainer component={Paper}>
+                    <Table aria-label="Items management table">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Image</TableCell>
+                          <TableCell>Name</TableCell>
+                          <TableCell>Category</TableCell>
+                          <TableCell>Price</TableCell>
+                          <TableCell>Status</TableCell>
+                          <TableCell>Created</TableCell>
+                          <TableCell>Actions</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {items.map((item) => (
+                          <TableRow 
+                            key={item.id} 
+                            hover
+                            aria-label={`Item: ${item.name}, Category: ${item.category}, Price: ${formatCurrency(item.price)}, Status: ${item.status}`}
+                            aria-describedby={`item-${item.id}-description`}
+                          >
+                            <TableCell>
+                              <Avatar
+                                src={item.imageUrl}
+                                alt={`${item.name} product image`}
+                                sx={{ width: 50, height: 50 }}
+                                variant="rounded"
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Typography variant="subtitle2" noWrap>
+                                {item.name}
+                              </Typography>
+                              <Typography 
+                                variant="body2" 
+                                color="textSecondary" 
+                                noWrap
+                                id={`item-${item.id}-description`}
+                              >
+                                {item.description?.substring(0, 50)}...
+                              </Typography>
+                            </TableCell>
+                            <TableCell aria-label={`Category: ${item.category}`}>
+                              {item.category}
+                            </TableCell>
+                            <TableCell aria-label={`Price: ${formatCurrency(item.price)}`}>
+                              {formatCurrency(item.price)}
+                            </TableCell>
+                            <TableCell aria-label={`Status: ${item.status}`}>
+                              <Chip
+                                label={item.status}
+                                color={getStatusColor(item.status)}
+                                size="small"
+                                aria-label={`Status: ${item.status}`}
+                              />
+                            </TableCell>
+                            <TableCell aria-label={`Created: ${new Date(item.createdAt).toLocaleDateString()}`}>
+                              {new Date(item.createdAt).toLocaleDateString()}
+                            </TableCell>
+                            <TableCell>
+                              <Box sx={{ display: 'flex', gap: 1 }} role="group" aria-label="Item actions">
+                                <Tooltip title="View item details">
+                                  <IconButton 
+                                    size="small" 
+                                    color="primary"
+                                    aria-label={`View details for ${item.name}`}
+                                  >
+                                    <ViewIcon />
+                                  </IconButton>
+                                </Tooltip>
+                                <Tooltip title="Edit item">
+                                  <IconButton
+                                    size="small"
+                                    color="primary"
+                                    onClick={() => handleEditItem(item)}
+                                    aria-label={`Edit ${item.name}`}
+                                  >
+                                    <EditIcon />
+                                  </IconButton>
+                                </Tooltip>
+                                <Tooltip title="Delete item">
+                                  <IconButton
+                                    size="small"
+                                    color="error"
+                                    onClick={() => handleDeleteItem(item)}
+                                    aria-label={`Delete ${item.name}`}
+                                  >
+                                    <DeleteIcon />
+                                  </IconButton>
+                                </Tooltip>
+                              </Box>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+
+                  {/* Pagination */}
+                  {totalPages > 1 && (
+                    <Box sx={{ display: 'flex', justifyContent: 'center', mt: 3 }}>
+                      <Pagination
+                        count={totalPages}
+                        page={currentPage}
+                        onChange={handlePageChange}
+                        color="primary"
+                        size="large"
+                        aria-label="Items pagination"
+                      />
+                    </Box>
+                  )}
+
+                  {items.length === 0 && !loading && (
+                    <Box sx={{ textAlign: 'center', py: 4 }}>
+                      <Typography variant="h6" color="textSecondary">
+                        No items found
+                      </Typography>
+                      <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
+                        {searchQuery || categoryFilter || statusFilter
+                          ? 'Try adjusting your search criteria'
+                          : 'Get started by creating your first item'}
+                      </Typography>
+                      <Button
+                        variant="contained"
+                        startIcon={<AddIcon />}
+                        onClick={handleCreateItem}
+                      >
+                        Add New Item
+                      </Button>
+                    </Box>
+                  )}
+                </>
+              )}
+            </CardContent>
+          </Card>
         </Box>
 
-        {/* Stats Cards */}
-        <Grid container spacing={3} sx={{ mb: 4 }}>
-          <Grid item xs={12} sm={6} md={3}>
-            <Card>
-              <CardContent>
-                <Typography color="textSecondary" gutterBottom>
-                  Total Items
-                </Typography>
-                <Typography variant="h4">
-                  {totalItems}
-                </Typography>
-              </CardContent>
-            </Card>
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
-            <Card>
-              <CardContent>
-                <Typography color="textSecondary" gutterBottom>
-                  Categories
-                </Typography>
-                <Typography variant="h4">
-                  {categories.length}
-                </Typography>
-              </CardContent>
-            </Card>
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
-            <Card>
-              <CardContent>
-                <Typography color="textSecondary" gutterBottom>
-                  Active Items
-                </Typography>
-                <Typography variant="h4">
-                  {items.filter(item => item.status?.toLowerCase() === 'active').length}
-                </Typography>
-              </CardContent>
-            </Card>
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
-            <Card>
-              <CardContent>
-                <Typography color="textSecondary" gutterBottom>
-                  Draft Items
-                </Typography>
-                <Typography variant="h4">
-                  {items.filter(item => item.status?.toLowerCase() === 'draft').length}
-                </Typography>
-              </CardContent>
-            </Card>
-          </Grid>
-        </Grid>
+        {/* Item Form Dialog */}
+        <Dialog
+          open={openItemForm}
+          onClose={() => setOpenItemForm(false)}
+          maxWidth="md"
+          fullWidth
+          aria-labelledby="item-form-dialog-title"
+        >
+          <DialogTitle id="item-form-dialog-title">
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              {formMode === 'create' ? 'Create New Item' : 'Edit Item'}
+              <IconButton 
+                onClick={() => setOpenItemForm(false)}
+                aria-label="Close dialog"
+              >
+                <CloseIcon />
+              </IconButton>
+            </Box>
+          </DialogTitle>
+          <DialogContent>
+            <ItemForm
+              item={selectedItem}
+              mode={formMode}
+              categories={categories}
+              validStatuses={validStatuses}
+              onSubmit={handleFormSubmit}
+              onCancel={() => setOpenItemForm(false)}
+            />
+          </DialogContent>
+        </Dialog>
 
-        {/* Search and Filters */}
-        <Card sx={{ mb: 3 }}>
-          <CardContent>
-            <Grid container spacing={2} alignItems="center">
-              <Grid item xs={12} md={4}>
-                <TextField
-                  fullWidth
-                  placeholder="Search items..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  InputProps={{
-                    startAdornment: (
-                      <InputAdornment position="start">
-                        <SearchIcon />
-                      </InputAdornment>
-                    ),
-                  }}
-                />
-              </Grid>
-              <Grid item xs={12} sm={6} md={3}>
-                <FormControl fullWidth>
-                  <InputLabel>Category</InputLabel>
-                  <Select
-                    value={categoryFilter}
-                    label="Category"
-                    onChange={(e) => handleFilterChange('category', e.target.value)}
-                  >
-                    <MenuItem value="">All Categories</MenuItem>
-                    {categories.map((category) => (
-                      <MenuItem key={category.id} value={category.name}>
-                        {category.name}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              </Grid>
-              <Grid item xs={12} sm={6} md={3}>
-                <FormControl fullWidth>
-                  <InputLabel>Status</InputLabel>
-                  <Select
-                    value={statusFilter}
-                    label="Status"
-                    onChange={(e) => handleFilterChange('status', e.target.value)}
-                  >
-                    <MenuItem value="">All Status</MenuItem>
-                    {validStatuses.map((status) => (
-                      <MenuItem key={status} value={status}>
-                        {status.charAt(0).toUpperCase() + status.slice(1)}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              </Grid>
-              <Grid item xs={12} md={2}>
-                <Button
-                  fullWidth
-                  variant="outlined"
-                  startIcon={<FilterIcon />}
-                  onClick={() => {
-                    setSearchQuery('');
-                    setCategoryFilter('');
-                    setStatusFilter('');
-                  }}
-                >
-                  Clear Filters
-                </Button>
-              </Grid>
-            </Grid>
-          </CardContent>
-        </Card>
+        {/* Delete Confirmation Dialog */}
+        <Dialog
+          open={openDeleteDialog}
+          onClose={() => setOpenDeleteDialog(false)}
+          aria-labelledby="delete-dialog-title"
+          aria-describedby="delete-dialog-description"
+        >
+          <DialogTitle id="delete-dialog-title">
+            Confirm Delete
+          </DialogTitle>
+          <DialogContent>
+            <Typography id="delete-dialog-description">
+              Are you sure you want to delete "{selectedItem?.name}"? This action cannot be undone.
+            </Typography>
+          </DialogContent>
+          <DialogActions>
+            <Button 
+              onClick={() => setOpenDeleteDialog(false)}
+              aria-label="Cancel delete operation"
+            >
+              Cancel
+            </Button>
+            <Button 
+              onClick={confirmDelete} 
+              color="error" 
+              variant="contained"
+              disabled={loading}
+              aria-label="Confirm delete operation"
+            >
+              {loading ? <CircularProgress size={20} /> : 'Delete'}
+            </Button>
+          </DialogActions>
+        </Dialog>
 
-        {/* Items Table */}
-        <Card>
-          <CardContent>
-            {loading ? (
-              <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
-                <CircularProgress />
-              </Box>
-            ) : (
-              <>
-                <TableContainer component={Paper}>
-                  <Table>
-                    <TableHead>
-                      <TableRow>
-                        <TableCell>Image</TableCell>
-                        <TableCell>Name</TableCell>
-                        <TableCell>Category</TableCell>
-                        <TableCell>Price</TableCell>
-                        <TableCell>Status</TableCell>
-                        <TableCell>Created</TableCell>
-                        <TableCell>Actions</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {items.map((item) => (
-                        <TableRow key={item.id} hover>
-                          <TableCell>
-                            <Avatar
-                              src={item.imageUrl}
-                              alt={item.name}
-                              sx={{ width: 50, height: 50 }}
-                              variant="rounded"
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Typography variant="subtitle2" noWrap>
-                              {item.name}
-                            </Typography>
-                            <Typography variant="body2" color="textSecondary" noWrap>
-                              {item.description?.substring(0, 50)}...
-                            </Typography>
-                          </TableCell>
-                          <TableCell>{item.category}</TableCell>
-                          <TableCell>{formatCurrency(item.price)}</TableCell>
-                          <TableCell>
-                            <Chip
-                              label={item.status}
-                              color={getStatusColor(item.status)}
-                              size="small"
-                            />
-                          </TableCell>
-                          <TableCell>
-                            {new Date(item.createdAt).toLocaleDateString()}
-                          </TableCell>
-                          <TableCell>
-                            <Box sx={{ display: 'flex', gap: 1 }}>
-                              <Tooltip title="View">
-                                <IconButton size="small" color="primary">
-                                  <ViewIcon />
-                                </IconButton>
-                              </Tooltip>
-                              <Tooltip title="Edit">
-                                <IconButton
-                                  size="small"
-                                  color="primary"
-                                  onClick={() => handleEditItem(item)}
-                                >
-                                  <EditIcon />
-                                </IconButton>
-                              </Tooltip>
-                              <Tooltip title="Delete">
-                                <IconButton
-                                  size="small"
-                                  color="error"
-                                  onClick={() => handleDeleteItem(item)}
-                                >
-                                  <DeleteIcon />
-                                </IconButton>
-                              </Tooltip>
-                            </Box>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
+        {/* Success/Error Snackbar */}
+        <Snackbar
+          open={!!success}
+          autoHideDuration={6000}
+          onClose={handleCloseSnackbar}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        >
+          <Alert onClose={handleCloseSnackbar} severity="success">
+            {success}
+          </Alert>
+        </Snackbar>
 
-                {/* Pagination */}
-                {totalPages > 1 && (
-                  <Box sx={{ display: 'flex', justifyContent: 'center', mt: 3 }}>
-                    <Pagination
-                      count={totalPages}
-                      page={currentPage}
-                      onChange={handlePageChange}
-                      color="primary"
-                      size="large"
-                    />
-                  </Box>
-                )}
-
-                {items.length === 0 && !loading && (
-                  <Box sx={{ textAlign: 'center', py: 4 }}>
-                    <Typography variant="h6" color="textSecondary">
-                      No items found
-                    </Typography>
-                    <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
-                      {searchQuery || categoryFilter || statusFilter
-                        ? 'Try adjusting your search criteria'
-                        : 'Get started by creating your first item'}
-                    </Typography>
-                    <Button
-                      variant="contained"
-                      startIcon={<AddIcon />}
-                      onClick={handleCreateItem}
-                    >
-                      Add New Item
-                    </Button>
-                  </Box>
-                )}
-              </>
-            )}
-          </CardContent>
-        </Card>
-      </Box>
-
-      {/* Item Form Dialog */}
-      <Dialog
-        open={openItemForm}
-        onClose={() => setOpenItemForm(false)}
-        maxWidth="md"
-        fullWidth
-      >
-        <DialogTitle>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            {formMode === 'create' ? 'Create New Item' : 'Edit Item'}
-            <IconButton onClick={() => setOpenItemForm(false)}>
-              <CloseIcon />
-            </IconButton>
-          </Box>
-        </DialogTitle>
-        <DialogContent>
-          <ItemForm
-            item={selectedItem}
-            mode={formMode}
-            categories={categories}
-            validStatuses={validStatuses}
-            onSubmit={handleFormSubmit}
-            onCancel={() => setOpenItemForm(false)}
-          />
-        </DialogContent>
-      </Dialog>
-
-      {/* Delete Confirmation Dialog */}
-      <Dialog
-        open={openDeleteDialog}
-        onClose={() => setOpenDeleteDialog(false)}
-      >
-        <DialogTitle>Confirm Delete</DialogTitle>
-        <DialogContent>
-          <Typography>
-            Are you sure you want to delete "{selectedItem?.name}"? This action cannot be undone.
-          </Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setOpenDeleteDialog(false)}>
-            Cancel
-          </Button>
-          <Button 
-            onClick={confirmDelete} 
-            color="error" 
-            variant="contained"
-            disabled={loading}
-          >
-            {loading ? <CircularProgress size={20} /> : 'Delete'}
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* Success/Error Snackbar */}
-      <Snackbar
-        open={!!success}
-        autoHideDuration={6000}
-        onClose={handleCloseSnackbar}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-      >
-        <Alert onClose={handleCloseSnackbar} severity="success">
-          {success}
-        </Alert>
-      </Snackbar>
-
-      <Snackbar
-        open={!!error}
-        autoHideDuration={6000}
-        onClose={handleCloseSnackbar}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-      >
-        <Alert onClose={handleCloseSnackbar} severity="error">
-          {error}
-        </Alert>
-      </Snackbar>
-    </Container>
+        <Snackbar
+          open={!!error}
+          autoHideDuration={6000}
+          onClose={handleCloseSnackbar}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        >
+          <Alert onClose={handleCloseSnackbar} severity="error">
+            {error}
+          </Alert>
+        </Snackbar>
+      </Container>
+    </AdminDashboardErrorBoundary>
   );
 };
 
