@@ -14,7 +14,8 @@ import {
   FiLogOut,
   FiInventory,
   FiDollarSign,
-  FiSettings
+  FiSettings,
+  FiLayers
 } from 'react-icons/fi';
 
 const DashboardLayout = ({ children }) => {
@@ -34,6 +35,7 @@ const DashboardLayout = ({ children }) => {
         return [
           ...baseItems,
           { name: 'User Management', href: '/dashboard/users', icon: FiUsers },
+          { name: 'Item Management', href: '/dashboard/items', icon: FiLayers },
           { name: 'Product Management', href: '/dashboard/products', icon: FiPackage },
           { name: 'Analytics', href: '/dashboard/analytics', icon: FiBarChart3 },
           { name: 'Orders', href: '/dashboard/orders', icon: FiShoppingCart },

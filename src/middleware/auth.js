@@ -116,6 +116,58 @@ const requireOwnershipOrAdmin = (userIdField = 'userId') => {
   };
 };
 
+// Middleware to check if user owns the item or is admin (for item operations)
+const requireItemOwnershipOrAdmin = async (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ 
+      success: false, 
+      message: 'Authentication required' 
+    });
+  }
+
+  // Admins have full access
+  if (req.user.role === 'admin') {
+    return next();
+  }
+
+  try {
+    const Item = require('../models/Item');
+    const itemId = req.params.id || req.params.itemId;
+    
+    if (!itemId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Item ID is required'
+      });
+    }
+
+    const item = await Item.findById(itemId);
+    
+    if (!item) {
+      return res.status(404).json({
+        success: false,
+        message: 'Item not found'
+      });
+    }
+
+    // Check if user owns the item (vendor can only modify their own items)
+    if (item.vendorId && item.vendorId.toString() === req.user._id.toString()) {
+      return next();
+    }
+
+    return res.status(403).json({
+      success: false,
+      message: 'Access denied: insufficient permissions to modify this item'
+    });
+    
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: 'Error verifying item ownership'
+    });
+  }
+};
+
 // Optional authentication - doesn't fail if no token provided
 const optionalAuth = async (req, res, next) => {
   const authHeader = req.headers['authorization'];
@@ -181,6 +233,7 @@ module.exports = {
   requireAdmin,
   requireVendorOrAdmin,
   requireOwnershipOrAdmin,
+  requireItemOwnershipOrAdmin,
   optionalAuth,
   authRateLimit
 };
