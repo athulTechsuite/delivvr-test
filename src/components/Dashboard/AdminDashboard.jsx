@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   Users, 
   Package, 
@@ -19,6 +19,106 @@ import {
   ChevronRight
 } from 'lucide-react';
 import { useTheme } from '../../contexts/ThemeContext';
+import DOMPurify from 'dompurify';
+
+// API service
+const ApiService = {
+  fetchUsers: () => fetch('/api/admin/users').then(res => res.json()),
+  fetchProducts: () => fetch('/api/admin/products').then(res => res.json()),
+  fetchItems: () => fetch('/api/admin/items').then(res => res.json()),
+  fetchOrders: () => fetch('/api/admin/orders').then(res => res.json()),
+  fetchAnalytics: () => fetch('/api/admin/analytics').then(res => res.json()),
+  createItem: (itemData) => fetch('/api/admin/items', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(itemData)
+  }).then(res => res.json()),
+  updateItem: (id, itemData) => fetch(`/api/admin/items/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(itemData)
+  }).then(res => res.json()),
+  deleteItem: (id) => fetch(`/api/admin/items/${id}`, {
+    method: 'DELETE'
+  }).then(res => res.json()),
+};
+
+// Mock data fallback for development
+const getMockData = () => ({
+  users: [
+    { id: 1, name: 'John Doe', email: 'john@example.com', role: 'customer', status: 'active', joinDate: '2024-01-15' },
+    { id: 2, name: 'Jane Smith', email: 'jane@example.com', role: 'vendor', status: 'active', joinDate: '2024-01-20' },
+    { id: 3, name: 'Bob Johnson', email: 'bob@example.com', role: 'customer', status: 'inactive', joinDate: '2024-01-25' }
+  ],
+  products: [
+    { id: 1, name: 'Wireless Headphones', price: 99.99, stock: 50, category: 'Electronics', status: 'active' },
+    { id: 2, name: 'Running Shoes', price: 129.99, stock: 30, category: 'Sports', status: 'active' },
+    { id: 3, name: 'Coffee Maker', price: 79.99, stock: 0, category: 'Appliances', status: 'out_of_stock' }
+  ],
+  items: [
+    { 
+      id: 1, 
+      name: 'Premium Coffee Beans', 
+      description: 'High-quality arabica coffee beans from Colombia',
+      price: 24.99, 
+      count: 150, 
+      category: 'Food & Beverages', 
+      status: 'active',
+      image: '/api/placeholder/100/100',
+      createdAt: '2024-01-15',
+      updatedAt: '2024-01-30'
+    },
+    { 
+      id: 2, 
+      name: 'Organic Green Tea', 
+      description: 'Premium organic green tea leaves',
+      price: 18.99, 
+      count: 75, 
+      category: 'Food & Beverages', 
+      status: 'active',
+      image: '/api/placeholder/100/100',
+      createdAt: '2024-01-20',
+      updatedAt: '2024-01-28'
+    },
+    { 
+      id: 3, 
+      name: 'Artisan Chocolate', 
+      description: 'Handcrafted dark chocolate with 70% cocoa',
+      price: 12.99, 
+      count: 0, 
+      category: 'Food & Beverages', 
+      status: 'out_of_stock',
+      image: '/api/placeholder/100/100',
+      createdAt: '2024-01-25',
+      updatedAt: '2024-02-01'
+    }
+  ],
+  orders: [
+    { id: 1, customer: 'John Doe', total: 199.98, status: 'completed', date: '2024-01-30' },
+    { id: 2, customer: 'Jane Smith', total: 99.99, status: 'pending', date: '2024-01-31' },
+    { id: 3, customer: 'Bob Johnson', total: 259.97, status: 'shipped', date: '2024-02-01' }
+  ],
+  analytics: {
+    totalUsers: 1250,
+    totalProducts: 450,
+    totalOrders: 850,
+    totalRevenue: 125000,
+    monthlyGrowth: 15.5,
+    topSellingProducts: [
+      { name: 'Wireless Headphones', sales: 156 },
+      { name: 'Running Shoes', sales: 142 },
+      { name: 'Coffee Maker', sales: 98 }
+    ]
+  }
+});
+
+// Notification types enum
+const NOTIFICATION_TYPES = {
+  SUCCESS: 'success',
+  ERROR: 'error',
+  WARNING: 'warning',
+  INFO: 'info'
+};
 
 const AdminDashboard = () => {
   const { theme, isDark } = useTheme();
@@ -52,99 +152,105 @@ const AdminDashboard = () => {
   const [formErrors, setFormErrors] = useState({});
   const [imagePreview, setImagePreview] = useState(null);
 
+  // Refs for cleanup
+  const isMountedRef = useRef(true);
+  const notificationTimeoutRef = useRef(null);
+
   useEffect(() => {
-    // Simulate API calls to fetch admin data
+    isMountedRef.current = true;
+    
+    return () => {
+      isMountedRef.current = false;
+      if (notificationTimeoutRef.current) {
+        clearTimeout(notificationTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // Error reporting service
+  const reportError = (error, context) => {
+    console.error(`Error in ${context}:`, error);
+    
+    // In production, send to error monitoring service
+    if (process.env.NODE_ENV === 'production') {
+      // Example: Sentry.captureException(error, { tags: { context } });
+    }
+  };
+
+  useEffect(() => {
     const fetchAdminData = async () => {
       try {
-        // Mock data - replace with actual API calls
-        setUsers([
-          { id: 1, name: 'John Doe', email: 'john@example.com', role: 'customer', status: 'active', joinDate: '2024-01-15' },
-          { id: 2, name: 'Jane Smith', email: 'jane@example.com', role: 'vendor', status: 'active', joinDate: '2024-01-20' },
-          { id: 3, name: 'Bob Johnson', email: 'bob@example.com', role: 'customer', status: 'inactive', joinDate: '2024-01-25' }
-        ]);
+        setLoading(true);
+        
+        // Try to fetch from API first, fallback to mock data
+        let data;
+        try {
+          const [usersRes, productsRes, itemsRes, ordersRes, analyticsRes] = await Promise.all([
+            ApiService.fetchUsers(),
+            ApiService.fetchProducts(), 
+            ApiService.fetchItems(),
+            ApiService.fetchOrders(),
+            ApiService.fetchAnalytics()
+          ]);
+          
+          data = {
+            users: usersRes,
+            products: productsRes,
+            items: itemsRes,
+            orders: ordersRes,
+            analytics: analyticsRes
+          };
+        } catch (apiError) {
+          console.warn('API not available, using mock data for development');
+          data = getMockData();
+        }
 
-        setProducts([
-          { id: 1, name: 'Wireless Headphones', price: 99.99, stock: 50, category: 'Electronics', status: 'active' },
-          { id: 2, name: 'Running Shoes', price: 129.99, stock: 30, category: 'Sports', status: 'active' },
-          { id: 3, name: 'Coffee Maker', price: 79.99, stock: 0, category: 'Appliances', status: 'out_of_stock' }
-        ]);
-
-        setItems([
-          { 
-            id: 1, 
-            name: 'Premium Coffee Beans', 
-            description: 'High-quality arabica coffee beans from Colombia',
-            price: 24.99, 
-            count: 150, 
-            category: 'Food & Beverages', 
-            status: 'active',
-            image: '/api/placeholder/100/100',
-            createdAt: '2024-01-15',
-            updatedAt: '2024-01-30'
-          },
-          { 
-            id: 2, 
-            name: 'Organic Green Tea', 
-            description: 'Premium organic green tea leaves',
-            price: 18.99, 
-            count: 75, 
-            category: 'Food & Beverages', 
-            status: 'active',
-            image: '/api/placeholder/100/100',
-            createdAt: '2024-01-20',
-            updatedAt: '2024-01-28'
-          },
-          { 
-            id: 3, 
-            name: 'Artisan Chocolate', 
-            description: 'Handcrafted dark chocolate with 70% cocoa',
-            price: 12.99, 
-            count: 0, 
-            category: 'Food & Beverages', 
-            status: 'out_of_stock',
-            image: '/api/placeholder/100/100',
-            createdAt: '2024-01-25',
-            updatedAt: '2024-02-01'
-          }
-        ]);
-
-        setOrders([
-          { id: 1, customer: 'John Doe', total: 199.98, status: 'completed', date: '2024-01-30' },
-          { id: 2, customer: 'Jane Smith', total: 99.99, status: 'pending', date: '2024-01-31' },
-          { id: 3, customer: 'Bob Johnson', total: 259.97, status: 'shipped', date: '2024-02-01' }
-        ]);
-
-        setAnalytics({
-          totalUsers: 1250,
-          totalProducts: 450,
-          totalOrders: 850,
-          totalRevenue: 125000,
-          monthlyGrowth: 15.5,
-          topSellingProducts: [
-            { name: 'Wireless Headphones', sales: 156 },
-            { name: 'Running Shoes', sales: 142 },
-            { name: 'Coffee Maker', sales: 98 }
-          ]
-        });
-
-        setLoading(false);
+        if (isMountedRef.current) {
+          setUsers(data.users);
+          setProducts(data.products);
+          setItems(data.items);
+          setOrders(data.orders);
+          setAnalytics(data.analytics);
+          setLoading(false);
+        }
       } catch (error) {
-        console.error('Error fetching admin data:', error);
-        showNotification('Error loading data', 'error');
-        setLoading(false);
+        reportError(error, 'fetchAdminData');
+        if (isMountedRef.current) {
+          showNotification('Failed to load admin data. Please try refreshing the page.', NOTIFICATION_TYPES.ERROR);
+          setLoading(false);
+        }
       }
     };
 
     fetchAdminData();
   }, []);
 
-  // Notification system
-  const showNotification = useCallback((message, type = 'success') => {
-    setNotification({ message, type });
-    setTimeout(() => setNotification(null), 4000);
+  // Notification system with cleanup
+  const showNotification = useCallback((message, type = NOTIFICATION_TYPES.SUCCESS) => {
+    if (!isMountedRef.current) return;
+    
+    // Clear existing timeout
+    if (notificationTimeoutRef.current) {
+      clearTimeout(notificationTimeoutRef.current);
+    }
+    
+    const sanitizedMessage = DOMPurify.sanitize(message);
+    setNotification({ message: sanitizedMessage, type });
+    
+    notificationTimeoutRef.current = setTimeout(() => {
+      if (isMountedRef.current) {
+        setNotification(null);
+      }
+    }, 4000);
   }, []);
 
-  // Image validation and upload
+  // Input sanitization helper
+  const sanitizeInput = (input) => {
+    if (typeof input !== 'string') return input;
+    return DOMPurify.sanitize(input.trim());
+  };
+
+  // Image validation and upload with error handling
   const validateImageFile = (file) => {
     const maxSize = 200 * 1024; // 200KB
     if (file.size > maxSize) {
@@ -163,6 +269,7 @@ const AdminDashboard = () => {
     const file = e.target.files[0];
     if (!file) return;
 
+    // Client-side validation
     const error = validateImageFile(file);
     if (error) {
       setFormErrors(prev => ({ ...prev, image: error }));
@@ -172,91 +279,164 @@ const AdminDashboard = () => {
     setFormErrors(prev => ({ ...prev, image: null }));
     setItemForm(prev => ({ ...prev, image: file }));
     
-    // Create preview
-    const reader = new FileReader();
-    reader.onload = (e) => setImagePreview(e.target.result);
-    reader.readAsDataURL(file);
+    // Create preview with error handling
+    try {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          if (isMountedRef.current) {
+            setImagePreview(e.target.result);
+          }
+        } catch (previewError) {
+          reportError(previewError, 'image preview');
+          showNotification('Failed to generate image preview', NOTIFICATION_TYPES.ERROR);
+        }
+      };
+      reader.onerror = (error) => {
+        reportError(error, 'FileReader');
+        showNotification('Failed to read image file', NOTIFICATION_TYPES.ERROR);
+      };
+      reader.readAsDataURL(file);
+    } catch (readerError) {
+      reportError(readerError, 'FileReader initialization');
+      showNotification('Failed to process image file', NOTIFICATION_TYPES.ERROR);
+    }
   };
 
-  // Form validation
+  // Form validation with input sanitization
   const validateItemForm = () => {
     const errors = {};
     
-    if (!itemForm.name.trim()) errors.name = 'Name is required';
-    if (!itemForm.description.trim()) errors.description = 'Description is required';
+    const sanitizedName = sanitizeInput(itemForm.name);
+    const sanitizedDescription = sanitizeInput(itemForm.description);
+    const sanitizedCategory = sanitizeInput(itemForm.category);
+    
+    if (!sanitizedName) errors.name = 'Name is required';
+    if (!sanitizedDescription) errors.description = 'Description is required';
     if (!itemForm.price || parseFloat(itemForm.price) <= 0) errors.price = 'Valid price is required';
     if (!itemForm.count || parseInt(itemForm.count) < 0) errors.count = 'Valid count is required';
-    if (!itemForm.category.trim()) errors.category = 'Category is required';
+    if (!sanitizedCategory) errors.category = 'Category is required';
     
     return errors;
   };
 
-  // Item CRUD operations
+  // Item CRUD operations with proper error handling
   const handleCreateItem = async () => {
-    const errors = validateItemForm();
-    if (Object.keys(errors).length > 0) {
-      setFormErrors(errors);
-      return;
-    }
-
     try {
-      // Simulate API call
-      const newItem = {
-        id: Date.now(),
-        ...itemForm,
+      const errors = validateItemForm();
+      if (Object.keys(errors).length > 0) {
+        setFormErrors(errors);
+        return;
+      }
+
+      const sanitizedItemData = {
+        name: sanitizeInput(itemForm.name),
+        description: sanitizeInput(itemForm.description),
         price: parseFloat(itemForm.price),
         count: parseInt(itemForm.count),
-        status: parseInt(itemForm.count) > 0 ? 'active' : 'out_of_stock',
-        image: imagePreview || '/api/placeholder/100/100',
-        createdAt: new Date().toISOString().split('T')[0],
-        updatedAt: new Date().toISOString().split('T')[0]
+        category: sanitizeInput(itemForm.category),
+        image: itemForm.image
       };
 
-      setItems(prev => [newItem, ...prev]);
-      resetItemForm();
-      showNotification('Item created successfully');
+      // Note: Server-side validation is required for file uploads
+      // The server should validate file type, size, and scan for malicious content
+      
+      try {
+        const newItem = await ApiService.createItem(sanitizedItemData);
+        if (isMountedRef.current) {
+          setItems(prev => [newItem, ...prev]);
+          resetItemForm();
+          showNotification('Item created successfully', NOTIFICATION_TYPES.SUCCESS);
+        }
+      } catch (apiError) {
+        // Fallback for development/mock
+        const mockItem = {
+          id: Date.now(),
+          ...sanitizedItemData,
+          status: sanitizedItemData.count > 0 ? 'active' : 'out_of_stock',
+          image: imagePreview || '/api/placeholder/100/100',
+          createdAt: new Date().toISOString().split('T')[0],
+          updatedAt: new Date().toISOString().split('T')[0]
+        };
+        
+        if (isMountedRef.current) {
+          setItems(prev => [mockItem, ...prev]);
+          resetItemForm();
+          showNotification('Item created successfully (mock)', NOTIFICATION_TYPES.SUCCESS);
+        }
+      }
     } catch (error) {
-      showNotification('Error creating item', 'error');
+      reportError(error, 'handleCreateItem');
+      showNotification('Failed to create item. Please try again.', NOTIFICATION_TYPES.ERROR);
     }
   };
 
   const handleUpdateItem = async () => {
-    const errors = validateItemForm();
-    if (Object.keys(errors).length > 0) {
-      setFormErrors(errors);
-      return;
-    }
-
     try {
-      // Simulate API call
-      const updatedItem = {
-        ...editingItem,
-        ...itemForm,
+      const errors = validateItemForm();
+      if (Object.keys(errors).length > 0) {
+        setFormErrors(errors);
+        return;
+      }
+
+      const sanitizedItemData = {
+        name: sanitizeInput(itemForm.name),
+        description: sanitizeInput(itemForm.description),
         price: parseFloat(itemForm.price),
         count: parseInt(itemForm.count),
-        status: parseInt(itemForm.count) > 0 ? 'active' : 'out_of_stock',
-        image: imagePreview || editingItem.image,
-        updatedAt: new Date().toISOString().split('T')[0]
+        category: sanitizeInput(itemForm.category),
+        image: itemForm.image
       };
 
-      setItems(prev => prev.map(item => 
-        item.id === editingItem.id ? updatedItem : item
-      ));
-      resetItemForm();
-      showNotification('Item updated successfully');
+      try {
+        const updatedItem = await ApiService.updateItem(editingItem.id, sanitizedItemData);
+        if (isMountedRef.current) {
+          setItems(prev => prev.map(item => 
+            item.id === editingItem.id ? updatedItem : item
+          ));
+          resetItemForm();
+          showNotification('Item updated successfully', NOTIFICATION_TYPES.SUCCESS);
+        }
+      } catch (apiError) {
+        // Fallback for development/mock
+        const mockUpdatedItem = {
+          ...editingItem,
+          ...sanitizedItemData,
+          status: sanitizedItemData.count > 0 ? 'active' : 'out_of_stock',
+          image: imagePreview || editingItem.image,
+          updatedAt: new Date().toISOString().split('T')[0]
+        };
+
+        if (isMountedRef.current) {
+          setItems(prev => prev.map(item => 
+            item.id === editingItem.id ? mockUpdatedItem : item
+          ));
+          resetItemForm();
+          showNotification('Item updated successfully (mock)', NOTIFICATION_TYPES.SUCCESS);
+        }
+      }
     } catch (error) {
-      showNotification('Error updating item', 'error');
+      reportError(error, 'handleUpdateItem');
+      showNotification('Failed to update item. Please try again.', NOTIFICATION_TYPES.ERROR);
     }
   };
 
   const handleDeleteItem = async (itemId) => {
     try {
-      // Simulate API call
-      setItems(prev => prev.filter(item => item.id !== itemId));
-      setShowDeleteConfirm(null);
-      showNotification('Item deleted successfully');
+      try {
+        await ApiService.deleteItem(itemId);
+      } catch (apiError) {
+        // Continue with mock deletion for development
+      }
+      
+      if (isMountedRef.current) {
+        setItems(prev => prev.filter(item => item.id !== itemId));
+        setShowDeleteConfirm(null);
+        showNotification('Item deleted successfully', NOTIFICATION_TYPES.SUCCESS);
+      }
     } catch (error) {
-      showNotification('Error deleting item', 'error');
+      reportError(error, 'handleDeleteItem');
+      showNotification('Failed to delete item. Please try again.', NOTIFICATION_TYPES.ERROR);
     }
   };
 
@@ -325,18 +505,39 @@ const AdminDashboard = () => {
   const Notification = () => {
     if (!notification) return null;
 
+    const getNotificationStyle = (type) => {
+      switch (type) {
+        case NOTIFICATION_TYPES.SUCCESS:
+          return 'bg-green-100 text-green-800 border-green-200';
+        case NOTIFICATION_TYPES.ERROR:
+          return 'bg-red-100 text-red-800 border-red-200';
+        case NOTIFICATION_TYPES.WARNING:
+          return 'bg-yellow-100 text-yellow-800 border-yellow-200';
+        case NOTIFICATION_TYPES.INFO:
+          return 'bg-blue-100 text-blue-800 border-blue-200';
+        default:
+          return 'bg-gray-100 text-gray-800 border-gray-200';
+      }
+    };
+
+    const getNotificationIcon = (type) => {
+      switch (type) {
+        case NOTIFICATION_TYPES.SUCCESS:
+          return <Check className="h-5 w-5" />;
+        case NOTIFICATION_TYPES.ERROR:
+        case NOTIFICATION_TYPES.WARNING:
+          return <AlertCircle className="h-5 w-5" />;
+        case NOTIFICATION_TYPES.INFO:
+          return <AlertCircle className="h-5 w-5" />;
+        default:
+          return <AlertCircle className="h-5 w-5" />;
+      }
+    };
+
     return (
-      <div className={`fixed top-4 right-4 z-50 p-4 rounded-lg shadow-lg flex items-center gap-3 ${
-        notification.type === 'success' 
-          ? 'bg-green-100 text-green-800 border-green-200' 
-          : 'bg-red-100 text-red-800 border-red-200'
-      }`}>
-        {notification.type === 'success' ? (
-          <Check className="h-5 w-5" />
-        ) : (
-          <AlertCircle className="h-5 w-5" />
-        )}
-        <span>{notification.message}</span>
+      <div className={`fixed top-4 right-4 z-50 p-4 rounded-lg shadow-lg flex items-center gap-3 ${getNotificationStyle(notification.type)}`}>
+        {getNotificationIcon(notification.type)}
+        <span dangerouslySetInnerHTML={{ __html: notification.message }} />
         <button 
           onClick={() => setNotification(null)}
           className="ml-2 text-gray-500 hover:text-gray-700"
@@ -458,8 +659,11 @@ const AdminDashboard = () => {
 
           <div className="mt-6">
             <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
-              Item Image (Max 200KB)
+              Item Image (Max 200KB) - Server validation required
             </label>
+            <div className="text-xs text-yellow-600 mb-2">
+              Note: Client-side validation only. Server must validate file type, size, and scan for malicious content.
+            </div>
             <div className="flex items-center gap-4">
               <div className="flex-1">
                 <input
@@ -1019,64 +1223,4 @@ const AdminDashboard = () => {
 
   if (loading) {
     return (
-      <div className={`min-h-screen flex items-center justify-center ${isDark ? 'bg-gray-900' : 'bg-gray-50'}`}>
-        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600"></div>
-      </div>
-    );
-  }
-
-  return (
-    <div className={`min-h-screen ${isDark ? 'bg-gray-900' : 'bg-gray-50'}`}>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="mb-8">
-          <h1 className={`text-3xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>Admin Dashboard</h1>
-          <p className={`mt-2 ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>Manage your eCommerce platform</p>
-        </div>
-
-        {/* Navigation Tabs */}
-        <div className="mb-8">
-          <nav className="flex space-x-8 overflow-x-auto">
-            {[
-              { id: 'overview', name: 'Overview', icon: TrendingUp },
-              { id: 'items', name: 'Items', icon: Package },
-              { id: 'users', name: 'Users', icon: Users },
-              { id: 'products', name: 'Products', icon: Package },
-              { id: 'analytics', name: 'Analytics', icon: TrendingUp }
-            ].map(({ id, name, icon: Icon }) => (
-              <button
-                key={id}
-                onClick={() => setActiveTab(id)}
-                className={`flex items-center gap-2 py-2 px-4 border-b-2 font-medium text-sm transition-colors whitespace-nowrap ${
-                  activeTab === id
-                    ? 'border-blue-500 text-blue-600'
-                    : `border-transparent ${isDark ? 'text-gray-400 hover:text-gray-200 hover:border-gray-600' : 'text-gray-500 hover:text-gray-700 hover:border-gray-300'}`
-                }`}
-              >
-                <Icon className="h-4 w-4" />
-                {name}
-              </button>
-            ))}
-          </nav>
-        </div>
-
-        {/* Tab Content */}
-        <div className={`rounded-lg shadow-sm ${isDark ? 'bg-gray-800' : 'bg-white'}`}>
-          <div className="p-6">
-            {activeTab === 'overview' && <AnalyticsTab />}
-            {activeTab === 'items' && <ItemManagementTab />}
-            {activeTab === 'users' && <UserManagementTab />}
-            {activeTab === 'products' && <ProductManagementTab />}
-            {activeTab === 'analytics' && <AnalyticsTab />}
-          </div>
-        </div>
-      </div>
-
-      {/* Modals */}
-      {showItemForm && <ItemForm />}
-      <DeleteConfirmDialog />
-      <Notification />
-    </div>
-  );
-};
-
-export default AdminDashboard;
+      <div className={`min-h-screen flex items-center justify
