@@ -3,6 +3,29 @@ const router = express.Router();
 const Product = require('../models/Product');
 const auth = require('../middleware/auth');
 const roleAuth = require('../middleware/roleAuth');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+
+// Configure multer for image uploads
+const storage = multer.memoryStorage();
+const upload = multer({
+  storage: storage,
+  limits: {
+    fileSize: 200 * 1024 // 200KB limit
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = /jpeg|jpg|png|gif|webp/;
+    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+    const mimetype = allowedTypes.test(file.mimetype);
+
+    if (mimetype && extname) {
+      return cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed'));
+    }
+  }
+});
 
 // Get all products (public route)
 router.get('/', async (req, res) => {
@@ -256,6 +279,233 @@ router.get('/vendor/my-products', auth, roleAuth(['vendor']), async (req, res) =
     res.status(500).json({
       success: false,
       message: 'Server error'
+    });
+  }
+});
+
+// Admin dashboard: Get all products with enhanced filtering and pagination
+router.get('/admin/dashboard', auth, roleAuth(['admin']), async (req, res) => {
+  try {
+    const { 
+      page = 1, 
+      limit = 20, 
+      search, 
+      category, 
+      status = 'all',
+      sortBy = 'createdAt',
+      sortOrder = 'desc'
+    } = req.query;
+    
+    const query = {};
+    
+    // Status filter
+    if (status === 'active') {
+      query.active = true;
+    } else if (status === 'inactive') {
+      query.active = false;
+    }
+    
+    // Search filter
+    if (search) {
+      query.$or = [
+        { name: { $regex: search, $options: 'i' } },
+        { description: { $regex: search, $options: 'i' } },
+        { category: { $regex: search, $options: 'i' } }
+      ];
+    }
+    
+    // Category filter
+    if (category && category !== 'all') {
+      query.category = category;
+    }
+    
+    const sortOptions = {};
+    sortOptions[sortBy] = sortOrder === 'desc' ? -1 : 1;
+    
+    const options = {
+      page: parseInt(page),
+      limit: parseInt(limit),
+      sort: sortOptions,
+      populate: [
+        { path: 'vendor', select: 'name email' }
+      ]
+    };
+    
+    const products = await Product.paginate(query, options);
+    
+    // Add summary statistics
+    const totalProducts = await Product.countDocuments({});
+    const activeProducts = await Product.countDocuments({ active: true });
+    const inactiveProducts = await Product.countDocuments({ active: false });
+    
+    res.json({
+      success: true,
+      data: {
+        ...products,
+        statistics: {
+          total: totalProducts,
+          active: activeProducts,
+          inactive: inactiveProducts
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Get admin dashboard products error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
+    });
+  }
+});
+
+// Admin: Bulk delete products
+router.post('/admin/bulk-delete', auth, roleAuth(['admin']), async (req, res) => {
+  try {
+    const { productIds } = req.body;
+    
+    if (!productIds || !Array.isArray(productIds) || productIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Product IDs array is required'
+      });
+    }
+    
+    // Validate product IDs
+    const validIds = productIds.filter(id => id && typeof id === 'string');
+    
+    if (validIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No valid product IDs provided'
+      });
+    }
+    
+    // Soft delete - mark as inactive
+    const result = await Product.updateMany(
+      { _id: { $in: validIds } },
+      { 
+        active: false,
+        updatedAt: new Date()
+      }
+    );
+    
+    res.json({
+      success: true,
+      message: `${result.modifiedCount} products deleted successfully`,
+      data: {
+        deletedCount: result.modifiedCount,
+        requestedCount: validIds.length
+      }
+    });
+  } catch (error) {
+    console.error('Bulk delete products error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
+    });
+  }
+});
+
+// Admin: Bulk update product status
+router.post('/admin/bulk-status', auth, roleAuth(['admin']), async (req, res) => {
+  try {
+    const { productIds, active } = req.body;
+    
+    if (!productIds || !Array.isArray(productIds) || productIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Product IDs array is required'
+      });
+    }
+    
+    if (typeof active !== 'boolean') {
+      return res.status(400).json({
+        success: false,
+        message: 'Active status (boolean) is required'
+      });
+    }
+    
+    const result = await Product.updateMany(
+      { _id: { $in: productIds } },
+      { 
+        active: active,
+        updatedAt: new Date()
+      }
+    );
+    
+    res.json({
+      success: true,
+      message: `${result.modifiedCount} products updated successfully`,
+      data: {
+        updatedCount: result.modifiedCount,
+        newStatus: active ? 'active' : 'inactive'
+      }
+    });
+  } catch (error) {
+    console.error('Bulk update products error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
+    });
+  }
+});
+
+// Upload product image
+router.post('/upload-image', auth, roleAuth(['admin', 'vendor']), upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'No image file provided'
+      });
+    }
+    
+    // Create uploads directory if it doesn't exist
+    const uploadDir = path.join(__dirname, '../../public/uploads/products');
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    
+    // Generate unique filename
+    const fileExtension = path.extname(req.file.originalname);
+    const fileName = `product_${Date.now()}_${Math.random().toString(36).substr(2, 9)}${fileExtension}`;
+    const filePath = path.join(uploadDir, fileName);
+    
+    // Save file
+    fs.writeFileSync(filePath, req.file.buffer);
+    
+    // Return file URL
+    const imageUrl = `/uploads/products/${fileName}`;
+    
+    res.json({
+      success: true,
+      message: 'Image uploaded successfully',
+      data: {
+        url: imageUrl,
+        filename: fileName,
+        size: req.file.size
+      }
+    });
+  } catch (error) {
+    console.error('Upload image error:', error);
+    
+    if (error.message === 'Only image files are allowed') {
+      return res.status(400).json({
+        success: false,
+        message: 'Only image files (JPEG, PNG, GIF, WebP) are allowed'
+      });
+    }
+    
+    if (error.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({
+        success: false,
+        message: 'File size must be less than 200KB'
+      });
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: 'Image upload failed'
     });
   }
 });
