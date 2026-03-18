@@ -3,10 +3,10 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     id SERIAL PRIMARY KEY,
     table_name VARCHAR(50) NOT NULL,
     record_id INTEGER NOT NULL,
-    action VARCHAR(20) NOT NULL CHECK (action IN ('CREATE', 'UPDATE', 'DELETE')),
+    action VARCHAR(20) NOT NULL CHECK (action IN ('CREATE', 'UPDATE', 'DELETE', 'BULK_DELETE', 'RESTORE')),
     old_values JSONB,
     new_values JSONB,
-    changed_by INTEGER NOT NULL,
+    changed_by INTEGER,
     changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     ip_address INET,
     user_agent TEXT,
@@ -31,10 +31,10 @@ CREATE INDEX idx_audit_logs_table_action_date ON audit_logs(table_name, action, 
 COMMENT ON TABLE audit_logs IS 'Tracks all changes to items and other entities for admin dashboard audit trail';
 COMMENT ON COLUMN audit_logs.table_name IS 'Name of the table that was modified';
 COMMENT ON COLUMN audit_logs.record_id IS 'ID of the record that was modified';
-COMMENT ON COLUMN audit_logs.action IS 'Type of operation performed (CREATE, UPDATE, DELETE)';
+COMMENT ON COLUMN audit_logs.action IS 'Type of operation performed (CREATE, UPDATE, DELETE, BULK_DELETE, RESTORE)';
 COMMENT ON COLUMN audit_logs.old_values IS 'JSON object containing the previous values before change';
 COMMENT ON COLUMN audit_logs.new_values IS 'JSON object containing the new values after change';
-COMMENT ON COLUMN audit_logs.changed_by IS 'User ID of the person who made the change';
+COMMENT ON COLUMN audit_logs.changed_by IS 'User ID of the person who made the change (NULL if user was deleted)';
 COMMENT ON COLUMN audit_logs.changed_at IS 'Timestamp when the change was made';
 COMMENT ON COLUMN audit_logs.ip_address IS 'IP address of the user making the change';
 COMMENT ON COLUMN audit_logs.user_agent IS 'User agent string of the browser/client making the change';
