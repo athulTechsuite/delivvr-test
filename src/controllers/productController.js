@@ -1,11 +1,11 @@
 const Product = require('../models/Product');
 const { validationResult } = require('express-validator');
 
-// Get all products with filtering and pagination
+// Get all products with filtering and pagination (enhanced for admin dashboard)
 const getProducts = async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 12;
+    const limit = parseInt(req.query.limit) || (req.user && req.user.role === 'admin' ? 20 : 12);
     const skip = (page - 1) * limit;
     
     // Build filter object
@@ -25,8 +25,13 @@ const getProducts = async (req, res) => {
       ];
     }
 
-    // Only show active products for non-admin users
-    if (!req.user || req.user.role !== 'admin') {
+    // Admin dashboard specific filters
+    if (req.user && req.user.role === 'admin') {
+      if (req.query.status) {
+        filter.isActive = req.query.status === 'active';
+      }
+    } else {
+      // Only show active products for non-admin users
       filter.isActive = true;
       filter.stock = { $gt: 0 };
     }
@@ -48,7 +53,8 @@ const getProducts = async (req, res) => {
           totalPages: Math.ceil(total / limit),
           totalItems: total,
           hasNext: page < Math.ceil(total / limit),
-          hasPrev: page > 1
+          hasPrev: page > 1,
+          limit
         }
       }
     });
@@ -125,6 +131,14 @@ const createProduct = async (req, res) => {
       tags
     } = req.body;
 
+    // Validate required fields
+    if (!name || !description || !price || !category) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields: name, description, price, and category are required'
+      });
+    }
+
     // Set vendor based on user role
     let vendorId = req.user.id;
     if (req.user.role === 'admin' && req.body.vendor) {
@@ -136,7 +150,7 @@ const createProduct = async (req, res) => {
       description,
       price,
       category,
-      stock,
+      stock: stock || 0,
       images: images || [],
       specifications: specifications || {},
       tags: tags || [],
@@ -269,6 +283,55 @@ const deleteProduct = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to delete product',
+      error: error.message
+    });
+  }
+};
+
+// Bulk delete products (admin only)
+const bulkDeleteProducts = async (req, res) => {
+  try {
+    const { ids } = req.body;
+
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide an array of product IDs'
+      });
+    }
+
+    // Check if user is admin
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Only administrators can perform bulk operations'
+      });
+    }
+
+    // Update multiple products to set isActive to false (soft delete)
+    const result = await Product.updateMany(
+      { _id: { $in: ids } },
+      { 
+        $set: { 
+          isActive: false, 
+          updatedAt: new Date() 
+        } 
+      }
+    );
+
+    res.json({
+      success: true,
+      message: `Successfully deleted ${result.modifiedCount} products`,
+      data: {
+        deletedCount: result.modifiedCount,
+        requestedCount: ids.length
+      }
+    });
+  } catch (error) {
+    console.error('Bulk delete products error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete products',
       error: error.message
     });
   }
@@ -421,6 +484,7 @@ module.exports = {
   createProduct,
   updateProduct,
   deleteProduct,
+  bulkDeleteProducts,
   getVendorProducts,
   getCategories,
   addReview

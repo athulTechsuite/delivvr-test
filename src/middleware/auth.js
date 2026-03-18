@@ -116,6 +116,121 @@ const requireOwnershipOrAdmin = (userIdField = 'userId') => {
   };
 };
 
+// Middleware to check if user owns the item or is admin (for item management)
+const requireItemOwnershipOrAdmin = async (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ 
+      success: false, 
+      message: 'Authentication required' 
+    });
+  }
+
+  // Admin can access all items
+  if (req.user.role === 'admin') {
+    return next();
+  }
+
+  try {
+    const Item = require('../models/Item');
+    const itemId = req.params.id || req.params.itemId;
+    
+    if (!itemId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Item ID required' 
+      });
+    }
+
+    const item = await Item.findById(itemId);
+    
+    if (!item) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Item not found' 
+      });
+    }
+
+    // Check if user owns the item (vendor check)
+    if (item.vendorId && item.vendorId.toString() === req.user._id.toString()) {
+      return next();
+    }
+
+    // Check if user created the item
+    if (item.createdBy && item.createdBy.toString() === req.user._id.toString()) {
+      return next();
+    }
+
+    return res.status(403).json({ 
+      success: false, 
+      message: 'Access denied: you can only manage your own items' 
+    });
+
+  } catch (error) {
+    return res.status(500).json({ 
+      success: false, 
+      message: 'Error validating item ownership' 
+    });
+  }
+};
+
+// Middleware for bulk operations - ensures user can only perform bulk actions on their own items
+const requireBulkItemAccess = async (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ 
+      success: false, 
+      message: 'Authentication required' 
+    });
+  }
+
+  // Admin can perform bulk operations on all items
+  if (req.user.role === 'admin') {
+    return next();
+  }
+
+  try {
+    const Item = require('../models/Item');
+    const itemIds = req.body.itemIds || [];
+    
+    if (!itemIds.length) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Item IDs required for bulk operation' 
+      });
+    }
+
+    // Check if user owns all the items they're trying to modify
+    const items = await Item.find({ _id: { $in: itemIds } });
+    
+    if (items.length !== itemIds.length) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Some items not found' 
+      });
+    }
+
+    const unauthorizedItems = items.filter(item => {
+      const isVendorOwned = item.vendorId && item.vendorId.toString() === req.user._id.toString();
+      const isCreatedByUser = item.createdBy && item.createdBy.toString() === req.user._id.toString();
+      return !isVendorOwned && !isCreatedByUser;
+    });
+
+    if (unauthorizedItems.length > 0) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Access denied: you can only perform bulk operations on your own items' 
+      });
+    }
+
+    next();
+
+  } catch (error) {
+    return res.status(500).json({ 
+      success: false, 
+      message: 'Error validating bulk item access' 
+    });
+  }
+};
+
 // Optional authentication - doesn't fail if no token provided
 const optionalAuth = async (req, res, next) => {
   const authHeader = req.headers['authorization'];
@@ -181,6 +296,8 @@ module.exports = {
   requireAdmin,
   requireVendorOrAdmin,
   requireOwnershipOrAdmin,
+  requireItemOwnershipOrAdmin,
+  requireBulkItemAccess,
   optionalAuth,
   authRateLimit
 };
