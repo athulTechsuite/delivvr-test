@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Users, 
   Package, 
@@ -18,15 +18,20 @@ import {
   ChevronRight
 } from 'lucide-react';
 import { useTheme } from '../../contexts/ThemeContext';
+import { useAuth } from '../../contexts/AuthContext';
+import { ITEM_STATUSES } from '../../constants/itemStatus';
+import * as adminAPI from '../../services/adminAPI';
 
 const AdminDashboard = () => {
   const { theme, isDark } = useTheme();
+  const { user, isAuthenticated } = useAuth();
   const [activeTab, setActiveTab] = useState('items');
   const [users, setUsers] = useState([]);
   const [items, setItems] = useState([]);
   const [orders, setOrders] = useState([]);
   const [analytics, setAnalytics] = useState({});
   const [loading, setLoading] = useState(true);
+  const [operationLoading, setOperationLoading] = useState(false);
   
   // Item management state
   const [searchTerm, setSearchTerm] = useState('');
@@ -45,75 +50,72 @@ const AdminDashboard = () => {
     description: '',
     price: '',
     category: '',
-    status: 'active',
+    status: ITEM_STATUSES.ACTIVE,
     stock: '',
-    image: null
+    image: null,
+    version: null
   });
   const [formErrors, setFormErrors] = useState({});
 
   const categories = ['Electronics', 'Clothing', 'Home & Garden', 'Sports', 'Books', 'Toys', 'Food & Drink'];
-  const statuses = ['active', 'inactive', 'out_of_stock', 'discontinued'];
+
+  // Authentication and authorization check
+  useEffect(() => {
+    if (!isAuthenticated || user?.role !== 'admin') {
+      // Redirect to login or show unauthorized message
+      setNotification({
+        message: 'Unauthorized access. Admin role required.',
+        type: 'error'
+      });
+      return;
+    }
+  }, [isAuthenticated, user]);
+
+  // Show notification with error reporting
+  const showNotification = useCallback((message, type = 'success', error = null) => {
+    setNotification({ message, type });
+    
+    // Report errors to monitoring service
+    if (type === 'error' && error) {
+      console.error('Admin Dashboard Error:', error);
+      // TODO: Integrate with error reporting service (e.g., Sentry)
+      // errorReportingService.captureException(error);
+    }
+    
+    setTimeout(() => setNotification(null), 5000);
+  }, []);
 
   useEffect(() => {
-    // Simulate API calls to fetch admin data
+    // Only fetch data if user is authenticated and authorized
+    if (!isAuthenticated || user?.role !== 'admin') {
+      setLoading(false);
+      return;
+    }
+
     const fetchAdminData = async () => {
       try {
-        // Mock data - replace with actual API calls
-        setUsers([
-          { id: 1, name: 'John Doe', email: 'john@example.com', role: 'customer', status: 'active', joinDate: '2024-01-15' },
-          { id: 2, name: 'Jane Smith', email: 'jane@example.com', role: 'vendor', status: 'active', joinDate: '2024-01-20' },
-          { id: 3, name: 'Bob Johnson', email: 'bob@example.com', role: 'customer', status: 'inactive', joinDate: '2024-01-25' }
+        setLoading(true);
+        
+        const [usersData, itemsData, ordersData, analyticsData] = await Promise.all([
+          adminAPI.getUsers(),
+          adminAPI.getItems(),
+          adminAPI.getOrders(),
+          adminAPI.getAnalytics()
         ]);
 
-        setItems([
-          { id: 1, name: 'Wireless Headphones', description: 'High-quality wireless headphones with noise cancellation', price: 99.99, stock: 50, category: 'Electronics', status: 'active', createdDate: '2024-01-15' },
-          { id: 2, name: 'Running Shoes', description: 'Comfortable running shoes for daily exercise', price: 129.99, stock: 30, category: 'Sports', status: 'active', createdDate: '2024-01-18' },
-          { id: 3, name: 'Coffee Maker', description: 'Programmable coffee maker with thermal carafe', price: 79.99, stock: 0, category: 'Home & Garden', status: 'out_of_stock', createdDate: '2024-01-20' },
-          { id: 4, name: 'Smartphone', description: 'Latest smartphone with advanced features', price: 699.99, stock: 25, category: 'Electronics', status: 'active', createdDate: '2024-01-22' },
-          { id: 5, name: 'Winter Jacket', description: 'Warm winter jacket for cold weather', price: 159.99, stock: 15, category: 'Clothing', status: 'active', createdDate: '2024-01-25' },
-          { id: 6, name: 'Gaming Mouse', description: 'High-precision gaming mouse with RGB lighting', price: 49.99, stock: 40, category: 'Electronics', status: 'active', createdDate: '2024-01-28' },
-          { id: 7, name: 'Yoga Mat', description: 'Non-slip yoga mat for home workouts', price: 29.99, stock: 60, category: 'Sports', status: 'active', createdDate: '2024-01-30' },
-          { id: 8, name: 'Desk Lamp', description: 'Adjustable LED desk lamp with USB charging', price: 39.99, stock: 20, category: 'Home & Garden', status: 'active', createdDate: '2024-02-01' },
-          { id: 9, name: 'Bluetooth Speaker', description: 'Portable Bluetooth speaker with excellent sound quality', price: 79.99, stock: 35, category: 'Electronics', status: 'active', createdDate: '2024-02-03' },
-          { id: 10, name: 'Fitness Tracker', description: 'Smart fitness tracker with heart rate monitoring', price: 149.99, stock: 28, category: 'Electronics', status: 'active', createdDate: '2024-02-05' },
-          { id: 11, name: 'Backpack', description: 'Durable hiking backpack with multiple compartments', price: 89.99, stock: 22, category: 'Sports', status: 'active', createdDate: '2024-02-07' },
-          { id: 12, name: 'Kitchen Knife Set', description: 'Professional kitchen knife set with wooden block', price: 129.99, stock: 12, category: 'Home & Garden', status: 'active', createdDate: '2024-02-10' }
-        ]);
-
-        setOrders([
-          { id: 1, customer: 'John Doe', total: 199.98, status: 'completed', date: '2024-01-30' },
-          { id: 2, customer: 'Jane Smith', total: 99.99, status: 'pending', date: '2024-01-31' },
-          { id: 3, customer: 'Bob Johnson', total: 259.97, status: 'shipped', date: '2024-02-01' }
-        ]);
-
-        setAnalytics({
-          totalUsers: 1250,
-          totalItems: 450,
-          totalOrders: 850,
-          totalRevenue: 125000,
-          monthlyGrowth: 15.5,
-          topSellingItems: [
-            { name: 'Wireless Headphones', sales: 156 },
-            { name: 'Running Shoes', sales: 142 },
-            { name: 'Coffee Maker', sales: 98 }
-          ]
-        });
-
-        setLoading(false);
+        setUsers(usersData);
+        setItems(itemsData);
+        setOrders(ordersData);
+        setAnalytics(analyticsData);
       } catch (error) {
-        console.error('Error fetching admin data:', error);
-        showNotification('Error loading dashboard data', 'error');
+        showNotification('Failed to load dashboard data. Please try again.', 'error', error);
+      } finally {
         setLoading(false);
       }
     };
 
     fetchAdminData();
-  }, []);
-
-  const showNotification = (message, type = 'success') => {
-    setNotification({ message, type });
-    setTimeout(() => setNotification(null), 5000);
-  };
+  }, [isAuthenticated, user, showNotification]);
 
   const validateForm = () => {
     const errors = {};
@@ -122,6 +124,7 @@ const AdminDashboard = () => {
     if (!formData.price || formData.price <= 0) errors.price = 'Valid price is required';
     if (!formData.category) errors.category = 'Category is required';
     if (!formData.stock || formData.stock < 0) errors.stock = 'Valid stock quantity is required';
+    if (!Object.values(ITEM_STATUSES).includes(formData.status)) errors.status = 'Invalid status selected';
     
     setFormErrors(errors);
     return Object.keys(errors).length === 0;
@@ -132,31 +135,40 @@ const AdminDashboard = () => {
     if (!validateForm()) return;
 
     try {
+      setOperationLoading(true);
+      let result;
+
+      const itemData = {
+        ...formData,
+        price: parseFloat(formData.price),
+        stock: parseInt(formData.stock)
+      };
+
       if (editingItem) {
-        // Update existing item
-        const updatedItems = items.map(item => 
-          item.id === editingItem.id 
-            ? { ...item, ...formData, price: parseFloat(formData.price), stock: parseInt(formData.stock) }
-            : item
+        result = await adminAPI.updateItem(editingItem.id, itemData);
+        // Update local state with optimistic update
+        setItems(prevItems => 
+          prevItems.map(item => 
+            item.id === editingItem.id ? { ...item, ...result } : item
+          )
         );
-        setItems(updatedItems);
         showNotification('Item updated successfully');
       } else {
-        // Create new item
-        const newItem = {
-          id: Date.now(),
-          ...formData,
-          price: parseFloat(formData.price),
-          stock: parseInt(formData.stock),
-          createdDate: new Date().toISOString().split('T')[0]
-        };
-        setItems([...items, newItem]);
+        result = await adminAPI.createItem(itemData);
+        // Add new item to local state
+        setItems(prevItems => [...prevItems, result]);
         showNotification('Item created successfully');
       }
       
       handleCloseForm();
     } catch (error) {
-      showNotification('Error saving item', 'error');
+      if (error.code === 'VERSION_CONFLICT') {
+        showNotification('Item was modified by another user. Please refresh and try again.', 'error');
+      } else {
+        showNotification('Failed to save item. Please try again.', 'error', error);
+      }
+    } finally {
+      setOperationLoading(false);
     }
   };
 
@@ -168,9 +180,10 @@ const AdminDashboard = () => {
       description: '',
       price: '',
       category: '',
-      status: 'active',
+      status: ITEM_STATUSES.ACTIVE,
       stock: '',
-      image: null
+      image: null,
+      version: null
     });
     setFormErrors({});
   };
@@ -184,7 +197,8 @@ const AdminDashboard = () => {
       category: item.category,
       status: item.status,
       stock: item.stock.toString(),
-      image: null
+      image: null,
+      version: item.version
     });
     setShowItemForm(true);
   };
@@ -194,41 +208,115 @@ const AdminDashboard = () => {
     setShowDeleteDialog(true);
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
+    if (!deletingItem) return;
+
     try {
-      setItems(items.filter(item => item.id !== deletingItem.id));
+      setOperationLoading(true);
+      await adminAPI.deleteItem(deletingItem.id, deletingItem.version);
+      
+      // Remove from local state
+      setItems(prevItems => prevItems.filter(item => item.id !== deletingItem.id));
       showNotification('Item deleted successfully');
       setShowDeleteDialog(false);
       setDeletingItem(null);
     } catch (error) {
-      showNotification('Error deleting item', 'error');
+      if (error.code === 'VERSION_CONFLICT') {
+        showNotification('Item was modified by another user. Please refresh and try again.', 'error');
+      } else {
+        showNotification('Failed to delete item. Please try again.', 'error', error);
+      }
+    } finally {
+      setOperationLoading(false);
     }
   };
 
-  const handleBulkDelete = () => {
+  const handleBulkDelete = async () => {
     if (selectedItems.length === 0) return;
     
     try {
-      setItems(items.filter(item => !selectedItems.includes(item.id)));
-      showNotification(`${selectedItems.length} items deleted successfully`);
-      setSelectedItems([]);
+      setOperationLoading(true);
+      
+      // Get items with version info for optimistic locking
+      const itemsToDelete = items
+        .filter(item => selectedItems.includes(item.id))
+        .map(item => ({ id: item.id, version: item.version }));
+
+      const results = await adminAPI.bulkDeleteItems(itemsToDelete);
+      
+      // Handle partial failures
+      const successfulDeletes = results.filter(r => r.success).map(r => r.id);
+      const failures = results.filter(r => !r.success);
+      
+      if (successfulDeletes.length > 0) {
+        // Remove successfully deleted items from local state
+        setItems(prevItems => 
+          prevItems.filter(item => !successfulDeletes.includes(item.id))
+        );
+        setSelectedItems(prevSelected => 
+          prevSelected.filter(id => !successfulDeletes.includes(id))
+        );
+      }
+      
+      if (failures.length === 0) {
+        showNotification(`${successfulDeletes.length} items deleted successfully`);
+      } else {
+        showNotification(
+          `${successfulDeletes.length} items deleted, ${failures.length} failed due to conflicts. Please refresh and retry.`,
+          'warning'
+        );
+      }
     } catch (error) {
-      showNotification('Error deleting items', 'error');
+      showNotification('Failed to delete items. Please try again.', 'error', error);
+    } finally {
+      setOperationLoading(false);
     }
   };
 
-  const handleBulkStatusUpdate = (newStatus) => {
-    if (selectedItems.length === 0) return;
+  const handleBulkStatusUpdate = async (newStatus) => {
+    if (selectedItems.length === 0 || !Object.values(ITEM_STATUSES).includes(newStatus)) return;
 
     try {
-      const updatedItems = items.map(item => 
-        selectedItems.includes(item.id) ? { ...item, status: newStatus } : item
-      );
-      setItems(updatedItems);
-      showNotification(`${selectedItems.length} items updated to ${newStatus}`);
-      setSelectedItems([]);
+      setOperationLoading(true);
+      
+      // Get items with version info for optimistic locking
+      const itemsToUpdate = items
+        .filter(item => selectedItems.includes(item.id))
+        .map(item => ({ 
+          id: item.id, 
+          version: item.version, 
+          updates: { status: newStatus } 
+        }));
+
+      const results = await adminAPI.bulkUpdateItems(itemsToUpdate);
+      
+      // Handle partial failures
+      const successfulUpdates = results.filter(r => r.success);
+      const failures = results.filter(r => !r.success);
+      
+      if (successfulUpdates.length > 0) {
+        // Update local state with successful updates
+        setItems(prevItems => 
+          prevItems.map(item => {
+            const update = successfulUpdates.find(u => u.id === item.id);
+            return update ? { ...item, ...update.data } : item;
+          })
+        );
+        setSelectedItems([]);
+      }
+      
+      if (failures.length === 0) {
+        showNotification(`${successfulUpdates.length} items updated to ${newStatus}`);
+      } else {
+        showNotification(
+          `${successfulUpdates.length} items updated, ${failures.length} failed due to conflicts. Please refresh and retry.`,
+          'warning'
+        );
+      }
     } catch (error) {
-      showNotification('Error updating items', 'error');
+      showNotification('Failed to update items. Please try again.', 'error', error);
+    } finally {
+      setOperationLoading(false);
     }
   };
 
@@ -300,7 +388,8 @@ const AdminDashboard = () => {
           <h2 className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>Item Management</h2>
           <button 
             onClick={() => setShowItemForm(true)}
-            className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700 transition-colors"
+            disabled={operationLoading}
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Plus className="h-4 w-4" />
             Add New Item
@@ -349,7 +438,7 @@ const AdminDashboard = () => {
             }`}
           >
             <option value="">All Status</option>
-            {statuses.map(status => (
+            {Object.values(ITEM_STATUSES).map(status => (
               <option key={status} value={status}>{status.replace('_', ' ').toUpperCase()}</option>
             ))}
           </select>
@@ -364,20 +453,23 @@ const AdminDashboard = () => {
               </span>
               <div className="flex gap-2">
                 <button
-                  onClick={() => handleBulkStatusUpdate('active')}
-                  className="px-3 py-1 bg-green-600 text-white text-sm rounded hover:bg-green-700 transition-colors"
+                  onClick={() => handleBulkStatusUpdate(ITEM_STATUSES.ACTIVE)}
+                  disabled={operationLoading}
+                  className="px-3 py-1 bg-green-600 text-white text-sm rounded hover:bg-green-700 transition-colors disabled:opacity-50"
                 >
                   Mark Active
                 </button>
                 <button
-                  onClick={() => handleBulkStatusUpdate('inactive')}
-                  className="px-3 py-1 bg-yellow-600 text-white text-sm rounded hover:bg-yellow-700 transition-colors"
+                  onClick={() => handleBulkStatusUpdate(ITEM_STATUSES.INACTIVE)}
+                  disabled={operationLoading}
+                  className="px-3 py-1 bg-yellow-600 text-white text-sm rounded hover:bg-yellow-700 transition-colors disabled:opacity-50"
                 >
                   Mark Inactive
                 </button>
                 <button
                   onClick={handleBulkDelete}
-                  className="px-3 py-1 bg-red-600 text-white text-sm rounded hover:bg-red-700 transition-colors"
+                  disabled={operationLoading}
+                  className="px-3 py-1 bg-red-600 text-white text-sm rounded hover:bg-red-700 transition-colors disabled:opacity-50"
                 >
                   Delete Selected
                 </button>
@@ -437,9 +529,9 @@ const AdminDashboard = () => {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                        item.status === 'active' ? 'bg-green-100 text-green-800' : 
-                        item.status === 'out_of_stock' ? 'bg-red-100 text-red-800' :
-                        item.status === 'inactive' ? 'bg-yellow-100 text-yellow-800' :
+                        item.status === ITEM_STATUSES.ACTIVE ? 'bg-green-100 text-green-800' : 
+                        item.status === ITEM_STATUSES.OUT_OF_STOCK ? 'bg-red-100 text-red-800' :
+                        item.status === ITEM_STATUSES.INACTIVE ? 'bg-yellow-100 text-yellow-800' :
                         'bg-gray-100 text-gray-800'
                       }`}>
                         {item.status.replace('_', ' ')}
@@ -452,14 +544,16 @@ const AdminDashboard = () => {
                       <div className="flex space-x-2">
                         <button 
                           onClick={() => handleEdit(item)}
-                          className="text-green-600 hover:text-green-900 transition-colors"
+                          disabled={operationLoading}
+                          className="text-green-600 hover:text-green-900 transition-colors disabled:opacity-50"
                           title="Edit"
                         >
                           <Edit className="h-4 w-4" />
                         </button>
                         <button 
                           onClick={() => handleDelete(item)}
-                          className="text-red-600 hover:text-red-900 transition-colors"
+                          disabled={operationLoading}
+                          className="text-red-600 hover:text-red-900 transition-colors disabled:opacity-50"
                           title="Delete"
                         >
                           <Trash2 className="h-4 w-4" />
@@ -682,6 +776,23 @@ const AdminDashboard = () => {
     </div>
   );
 
+  // Show unauthorized message if user is not admin
+  if (!isAuthenticated || user?.role !== 'admin') {
+    return (
+      <div className={`min-h-screen flex items-center justify-center ${isDark ? 'bg-gray-900' : 'bg-gray-50'}`}>
+        <div className="text-center">
+          <AlertCircle className="mx-auto h-16 w-16 text-red-500 mb-4" />
+          <h2 className={`text-2xl font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+            Access Denied
+          </h2>
+          <p className={`${isDark ? 'text-gray-300' : 'text-gray-600'}`}>
+            You must be an administrator to access this page.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className={`min-h-screen flex items-center justify-center ${isDark ? 'bg-gray-900' : 'bg-gray-50'}`}>
@@ -735,7 +846,9 @@ const AdminDashboard = () => {
       {/* Notification */}
       {notification && (
         <div className={`fixed top-4 right-4 p-4 rounded-lg shadow-lg z-50 flex items-center gap-2 ${
-          notification.type === 'success' ? 'bg-green-500 text-white' : 'bg-red-500 text-white'
+          notification.type === 'success' ? 'bg-green-500 text-white' : 
+          notification.type === 'warning' ? 'bg-yellow-500 text-white' :
+          'bg-red-500 text-white'
         }`}>
           {notification.type === 'success' ? <Check className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
           {notification.message}
@@ -768,7 +881,8 @@ const AdminDashboard = () => {
                     type="text"
                     value={formData.name}
                     onChange={(e) => setFormData({...formData, name: e.target.value})}
-                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                    disabled={operationLoading}
+                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 ${
                       formErrors.name ? 'border-red-500' : isDark ? 'border-gray-600 bg-gray-700 text-white' : 'border-gray-300 bg-white text-gray-900'
                     }`}
                   />
@@ -783,7 +897,8 @@ const AdminDashboard = () => {
                     value={formData.description}
                     onChange={(e) => setFormData({...formData, description: e.target.value})}
                     rows={3}
-                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                    disabled={operationLoading}
+                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 ${
                       formErrors.description ? 'border-red-500' : isDark ? 'border-gray-600 bg-gray-700 text-white' : 'border-gray-300 bg-white text-gray-900'
                     }`}
                   />
@@ -800,7 +915,8 @@ const AdminDashboard = () => {
                       step="0.01"
                       value={formData.price}
                       onChange={(e) => setFormData({...formData, price: e.target.value})}
-                      className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                      disabled={operationLoading}
+                      className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 ${
                         formErrors.price ? 'border-red-500' : isDark ? 'border-gray-600 bg-gray-700 text-white' : 'border-gray-300 bg-white text-gray-900'
                       }`}
                     />
@@ -815,7 +931,8 @@ const AdminDashboard = () => {
                       type="number"
                       value={formData.stock}
                       onChange={(e) => setFormData({...formData, stock: e.target.value})}
-                      className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                      disabled={operationLoading}
+                      className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 ${
                         formErrors.stock ? 'border-red-500' : isDark ? 'border-gray-600 bg-gray-700 text-white' : 'border-gray-300 bg-white text-gray-900'
                       }`}
                     />
@@ -831,7 +948,8 @@ const AdminDashboard = () => {
                     <select
                       value={formData.category}
                       onChange={(e) => setFormData({...formData, category: e.target.value})}
-                      className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                      disabled={operationLoading}
+                      className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 ${
                         formErrors.category ? 'border-red-500' : isDark ? 'border-gray-600 bg-gray-700 text-white' : 'border-gray-300 bg-white text-gray-900'
                       }`}
                     >
@@ -850,11 +968,12 @@ const AdminDashboard = () => {
                     <select
                       value={formData.status}
                       onChange={(e) => setFormData({...formData, status: e.target.value})}
-                      className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                      disabled={operationLoading}
+                      className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 ${
                         isDark ? 'border-gray-600 bg-gray-700 text-white' : 'border-gray-300 bg-white text-gray-900'
                       }`}
                     >
-                      {statuses.map(status => (
+                      {Object.values(ITEM_STATUSES).map(status => (
                         <option key={status} value={status}>{status.replace('_', ' ').toUpperCase()}</option>
                       ))}
                     </select>
@@ -865,7 +984,8 @@ const AdminDashboard = () => {
                   <button
                     type="button"
                     onClick={handleCloseForm}
-                    className={`px-4 py-2 border rounded-lg transition-colors ${
+                    disabled={operationLoading}
+                    className={`px-4 py-2 border rounded-lg transition-colors disabled:opacity-50 ${
                       isDark ? 'border-gray-600 text-gray-300 hover:bg-gray-700' : 'border-gray-300 text-gray-700 hover:bg-gray-50'
                     }`}
                   >
@@ -873,9 +993,10 @@ const AdminDashboard = () => {
                   </button>
                   <button
                     type="submit"
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                    disabled={operationLoading}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {editingItem ? 'Update Item' : 'Create Item'}
+                    {operationLoading ? 'Saving...' : editingItem ? 'Update Item' : 'Create Item'}
                   </button>
                 </div>
               </form>
@@ -901,7 +1022,8 @@ const AdminDashboard = () => {
               <div className="flex justify-end gap-3">
                 <button
                   onClick={() => {setShowDeleteDialog(false); setDeletingItem(null);}}
-                  className={`px-4 py-2 border rounded-lg transition-colors ${
+                  disabled={operationLoading}
+                  className={`px-4 py-2 border rounded-lg transition-colors disabled:opacity-50 ${
                     isDark ? 'border-gray-600 text-gray-300 hover:bg-gray-700' : 'border-gray-300 text-gray-700 hover:bg-gray-50'
                   }`}
                 >
@@ -909,9 +1031,10 @@ const AdminDashboard = () => {
                 </button>
                 <button
                   onClick={confirmDelete}
-                  className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                  disabled={operationLoading}
+                  className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Delete
+                  {operationLoading ? 'Deleting...' : 'Delete'}
                 </button>
               </div>
             </div>
