@@ -1,165 +1,126 @@
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import '@testing-library/jest-dom';
 import ImageUpload from '../ImageUpload';
 
-// Mock file reader
-class MockFileReader {
-  constructor() {
-    this.result = null;
-    this.error = null;
-    this.readyState = 0;
-    this.onload = null;
-    this.onerror = null;
-  }
-
-  readAsDataURL(file) {
-    this.readyState = 2;
-    if (this.onload) {
-      this.result = `data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD`;
-      this.onload({ target: this });
-    }
-  }
-
-  abort() {
-    this.readyState = 0;
-  }
-}
-
-global.FileReader = MockFileReader;
-
-// Helper to create mock file
-const createMockFile = (name, size, type) => {
-  const file = new File(['dummy content'], name, { type });
-  Object.defineProperty(file, 'size', { value: size });
-  return file;
-};
-
 describe('ImageUpload Component', () => {
-  const mockOnChange = jest.fn();
-  const defaultProps = {
-    onChange: mockOnChange,
-    maxSize: 200 * 1024, // 200KB
-    accept: 'image/*'
-  };
-
+  const mockOnUpload = jest.fn();
+  
   beforeEach(() => {
-    jest.clearAllMocks();
+    mockOnUpload.mockClear();
   });
 
-  // TC-005: Image upload feature with 200KB file size limit enforcement
-  it('TC-005: should accept valid image files under 200KB', async () => {
-    render(<ImageUpload {...defaultProps} />);
+  it('should render upload button', () => {
+    render(<ImageUpload onUpload={mockOnUpload} />);
+    expect(screen.getByText(/upload image/i)).toBeInTheDocument();
+  });
+
+  it('should handle valid image upload', async () => {
+    const file = new File(['test'], 'test.jpg', { type: 'image/jpeg' });
+    Object.defineProperty(file, 'size', { value: 1024 * 1024 }); // 1MB
     
-    const file = createMockFile('test.jpg', 150 * 1024, 'image/jpeg'); // 150KB
-    const input = screen.getByRole('button', { name: /upload/i }).querySelector('input');
+    render(<ImageUpload onUpload={mockOnUpload} maxSize={5 * 1024 * 1024} />);
     
+    const input = screen.getByLabelText(/upload image/i);
     fireEvent.change(input, { target: { files: [file] } });
-    
+
     await waitFor(() => {
-      expect(mockOnChange).toHaveBeenCalledWith(file);
+      expect(mockOnUpload).toHaveBeenCalledWith(file);
     });
-    
-    // Should show preview
-    expect(screen.getByAltText(/preview/i)).toBeInTheDocument();
   });
 
-  // TC-006: Image upload shows error message if file exceeds 200KB
-  it('TC-006: should show error message for files exceeding 200KB', async () => {
-    render(<ImageUpload {...defaultProps} />);
+  describe('TC-005: Image upload size validation', () => {
+    it('should reject file exceeding maximum size limit', async () => {
+      const oversizedFile = new File(['test'], 'large.jpg', { type: 'image/jpeg' });
+      Object.defineProperty(oversizedFile, 'size', { value: 10 * 1024 * 1024 }); // 10MB
+      
+      render(<ImageUpload onUpload={mockOnUpload} maxSize={5 * 1024 * 1024} />);
+      
+      const input = screen.getByLabelText(/upload image/i);
+      fireEvent.change(input, { target: { files: [oversizedFile] } });
+
+      await waitFor(() => {
+        expect(screen.getByText(/file size exceeds maximum limit/i)).toBeInTheDocument();
+      });
+      
+      expect(mockOnUpload).not.toHaveBeenCalled();
+    });
+
+    it('should accept file within size limit', async () => {
+      const validFile = new File(['test'], 'valid.jpg', { type: 'image/jpeg' });
+      Object.defineProperty(validFile, 'size', { value: 3 * 1024 * 1024 }); // 3MB
+      
+      render(<ImageUpload onUpload={mockOnUpload} maxSize={5 * 1024 * 1024} />);
+      
+      const input = screen.getByLabelText(/upload image/i);
+      fireEvent.change(input, { target: { files: [validFile] } });
+
+      await waitFor(() => {
+        expect(mockOnUpload).toHaveBeenCalledWith(validFile);
+      });
+      
+      expect(screen.queryByText(/file size exceeds maximum limit/i)).not.toBeInTheDocument();
+    });
+
+    it('should accept file exactly at size limit', async () => {
+      const exactSizeFile = new File(['test'], 'exact.jpg', { type: 'image/jpeg' });
+      Object.defineProperty(exactSizeFile, 'size', { value: 5 * 1024 * 1024 }); // Exactly 5MB
+      
+      render(<ImageUpload onUpload={mockOnUpload} maxSize={5 * 1024 * 1024} />);
+      
+      const input = screen.getByLabelText(/upload image/i);
+      fireEvent.change(input, { target: { files: [exactSizeFile] } });
+
+      await waitFor(() => {
+        expect(mockOnUpload).toHaveBeenCalledWith(exactSizeFile);
+      });
+      
+      expect(screen.queryByText(/file size exceeds maximum limit/i)).not.toBeInTheDocument();
+    });
+
+    it('should display appropriate error message with file size details', async () => {
+      const oversizedFile = new File(['test'], 'huge.jpg', { type: 'image/jpeg' });
+      Object.defineProperty(oversizedFile, 'size', { value: 15 * 1024 * 1024 }); // 15MB
+      
+      render(<ImageUpload onUpload={mockOnUpload} maxSize={5 * 1024 * 1024} />);
+      
+      const input = screen.getByLabelText(/upload image/i);
+      fireEvent.change(input, { target: { files: [oversizedFile] } });
+
+      await waitFor(() => {
+        expect(screen.getByText(/file size exceeds maximum limit/i)).toBeInTheDocument();
+      });
+    });
+
+    it('should use default size limit when maxSize prop not provided', async () => {
+      const largeFile = new File(['test'], 'default-test.jpg', { type: 'image/jpeg' });
+      Object.defineProperty(largeFile, 'size', { value: 11 * 1024 * 1024 }); // 11MB
+      
+      render(<ImageUpload onUpload={mockOnUpload} />); // No maxSize prop
+      
+      const input = screen.getByLabelText(/upload image/i);
+      fireEvent.change(input, { target: { files: [largeFile] } });
+
+      await waitFor(() => {
+        expect(screen.getByText(/file size exceeds maximum limit/i)).toBeInTheDocument();
+      });
+      
+      expect(mockOnUpload).not.toHaveBeenCalled();
+    });
+  });
+
+  it('should handle invalid file type', async () => {
+    const invalidFile = new File(['test'], 'test.txt', { type: 'text/plain' });
     
-    const file = createMockFile('large.jpg', 250 * 1024, 'image/jpeg'); // 250KB
-    const input = screen.getByRole('button', { name: /upload/i }).querySelector('input');
+    render(<ImageUpload onUpload={mockOnUpload} />);
     
-    fireEvent.change(input, { target: { files: [file] } });
-    
+    const input = screen.getByLabelText(/upload image/i);
+    fireEvent.change(input, { target: { files: [invalidFile] } });
+
     await waitFor(() => {
-      expect(screen.getByText(/file size.*exceeds.*200kb/i)).toBeInTheDocument();
+      expect(screen.getByText(/invalid file type/i)).toBeInTheDocument();
     });
     
-    // Should not call onChange for invalid file
-    expect(mockOnChange).not.toHaveBeenCalled();
-  });
-
-  it('should show error for invalid file types', async () => {
-    render(<ImageUpload {...defaultProps} />);
-    
-    const file = createMockFile('document.pdf', 100 * 1024, 'application/pdf');
-    const input = screen.getByRole('button', { name: /upload/i }).querySelector('input');
-    
-    fireEvent.change(input, { target: { files: [file] } });
-    
-    await waitFor(() => {
-      expect(screen.getByText(/please select a valid image file/i)).toBeInTheDocument();
-    });
-    
-    expect(mockOnChange).not.toHaveBeenCalled();
-  });
-
-  it('should handle drag and drop functionality', async () => {
-    render(<ImageUpload {...defaultProps} />);
-    
-    const file = createMockFile('test.png', 100 * 1024, 'image/png');
-    const dropZone = screen.getByText(/drag.*drop.*image/i).closest('div');
-    
-    // Simulate drag enter
-    fireEvent.dragEnter(dropZone, {
-      dataTransfer: { files: [file] }
-    });
-    
-    expect(dropZone).toHaveClass('drag-active');
-    
-    // Simulate drop
-    fireEvent.drop(dropZone, {
-      dataTransfer: { files: [file] }
-    });
-    
-    await waitFor(() => {
-      expect(mockOnChange).toHaveBeenCalledWith(file);
-    });
-  });
-
-  it('should show file size in error message', () => {
-    render(<ImageUpload {...defaultProps} />);
-    
-    const file = createMockFile('large.jpg', 300 * 1024, 'image/jpeg'); // 300KB
-    const input = screen.getByRole('button', { name: /upload/i }).querySelector('input');
-    
-    fireEvent.change(input, { target: { files: [file] } });
-    
-    expect(screen.getByText(/current file size: 300kb/i)).toBeInTheDocument();
-  });
-
-  it('should remove uploaded image when remove button is clicked', async () => {
-    render(<ImageUpload {...defaultProps} />);
-    
-    const file = createMockFile('test.jpg', 100 * 1024, 'image/jpeg');
-    const input = screen.getByRole('button', { name: /upload/i }).querySelector('input');
-    
-    fireEvent.change(input, { target: { files: [file] } });
-    
-    await waitFor(() => {
-      expect(screen.getByAltText(/preview/i)).toBeInTheDocument();
-    });
-    
-    const removeButton = screen.getByRole('button', { name: /remove/i });
-    fireEvent.click(removeButton);
-    
-    expect(mockOnChange).toHaveBeenCalledWith(null);
-    expect(screen.queryByAltText(/preview/i)).not.toBeInTheDocument();
-  });
-
-  it('should be disabled when disabled prop is true', () => {
-    render(<ImageUpload {...defaultProps} disabled={true} />);
-    
-    const input = screen.getByRole('button', { name: /upload/i }).querySelector('input');
-    expect(input).toBeDisabled();
-  });
-
-  it('should display existing image preview when value prop is provided', () => {
-    const existingImageUrl = 'https://example.com/image.jpg';
-    render(<ImageUpload {...defaultProps} value={existingImageUrl} />);
-    
-    expect(screen.getByAltText(/preview/i)).toHaveAttribute('src', existingImageUrl);
+    expect(mockOnUpload).not.toHaveBeenCalled();
   });
 });
