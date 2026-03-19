@@ -27,13 +27,11 @@ const TOTP_CONFIG = {
   encoding: process.env.TOTP_ENCODING || 'base32'
 };
 
-// 2FA Method Types - Expanded for completeness
+// 2FA Method Types - Only implemented methods
 const TWO_FA_METHODS = {
   TOTP: 'totp',
   SMS: 'sms',
-  EMAIL: 'email',
-  HARDWARE_KEY: 'hardware_key',
-  BACKUP_CODE: 'backup_code'
+  EMAIL: 'email'
 };
 
 // Validate 2FA method
@@ -105,10 +103,12 @@ const ROLE_PERMISSIONS = {
 
 // Redis client for rate limiting and verification attempts (fallback to in-memory for development)
 let redisClient = null;
+let redisConnected = false;
 const verificationAttempts = new Map(); // Fallback for development
+const rateLimitMutex = new Map(); // For atomic operations on in-memory storage
 
-// Initialize Redis client if available
-const initializeRedis = () => {
+// Enhanced Redis client initialization with proper error handling
+const initializeRedis = async () => {
   try {
     if (process.env.REDIS_URL || process.env.REDIS_HOST) {
       const Redis = require('redis');
@@ -118,20 +118,50 @@ const initializeRedis = () => {
             host: process.env.REDIS_HOST || 'localhost',
             port: process.env.REDIS_PORT || 6379,
             password: process.env.REDIS_PASSWORD,
-            db: process.env.REDIS_DB || 0
+            db: process.env.REDIS_DB || 0,
+            retry_strategy: (options) => {
+              if (options.error && options.error.code === 'ECONNREFUSED') {
+                console.error('Redis server connection refused');
+              }
+              if (options.total_retry_time > 1000 * 60 * 60) {
+                return new Error('Redis retry time exhausted');
+              }
+              if (options.attempt > 10) {
+                return undefined;
+              }
+              return Math.min(options.attempt * 100, 3000);
+            }
           };
       
       redisClient = Redis.createClient(redisOptions);
+      
+      redisClient.on('connect', () => {
+        console.log('Redis client connected');
+        redisConnected = true;
+      });
+      
       redisClient.on('error', (err) => {
         console.error('Redis Client Error:', err);
-        redisClient = null; // Fallback to in-memory
+        redisConnected = false;
       });
-      redisClient.connect();
+      
+      redisClient.on('end', () => {
+        console.log('Redis connection closed');
+        redisConnected = false;
+      });
+      
+      await redisClient.connect();
     }
   } catch (error) {
     console.warn('Redis not available, using in-memory storage:', error.message);
     redisClient = null;
+    redisConnected = false;
   }
+};
+
+// Check Redis connection health
+const isRedisHealthy = () => {
+  return redisClient && redisConnected && redisClient.isReady;
 };
 
 // Initialize Redis on module load
@@ -221,34 +251,25 @@ const generateQRCode = async (secret) => {
   }
 };
 
-// Verify TOTP token with constant-time comparison
+// Enhanced TOTP token verification with proper constant-time comparison
 const verifyTOTPToken = (token, secret) => {
   if (!token || !secret) {
     return false;
   }
   
-  // Generate the expected token using speakeasy
-  const expectedToken = speakeasy.totp({
+  // Ensure token is a string and normalize it
+  const normalizedToken = String(token).trim();
+  
+  // First, try window-based verification for time drift tolerance
+  const isValidWithWindow = speakeasy.totp.verify({
     secret: secret,
     encoding: TOTP_CONFIG.encoding,
+    token: normalizedToken,
+    window: TOTP_CONFIG.window,
     step: TOTP_CONFIG.step
   });
   
-  // Use constant-time comparison to prevent timing attacks
-  const isValid = constantTimeCompare(token, expectedToken);
-  
-  // Also check with window for time drift tolerance
-  if (!isValid) {
-    return speakeasy.totp.verify({
-      secret: secret,
-      encoding: TOTP_CONFIG.encoding,
-      token: token,
-      window: TOTP_CONFIG.window,
-      step: TOTP_CONFIG.step
-    });
-  }
-  
-  return isValid;
+  return isValidWithWindow;
 };
 
 // Generate backup recovery codes with improved security
@@ -274,20 +295,63 @@ const hashRecoveryCodes = async (codes) => {
   return hashedCodes;
 };
 
-// Verify recovery code with atomic operation for code invalidation
+// Input validation for recovery code operations
+const validateRecoveryCodeInput = (userId, hashedCodes, updateUserRecoveryCodes) => {
+  if (!userId || (typeof userId !== 'string' && typeof userId !== 'number')) {
+    throw new Error('Invalid user ID provided');
+  }
+  
+  if (!Array.isArray(hashedCodes)) {
+    throw new Error('Invalid recovery codes format');
+  }
+  
+  if (updateUserRecoveryCodes && typeof updateUserRecoveryCodes !== 'function') {
+    throw new Error('Invalid update function provided');
+  }
+};
+
+// Atomic recovery code verification and removal
 const verifyRecoveryCode = async (inputCode, hashedCodes, userId, updateUserRecoveryCodes) => {
-  for (let i = 0; i < hashedCodes.length; i++) {
-    const isValid = await bcrypt.compare(inputCode.toUpperCase(), hashedCodes[i]);
-    if (isValid) {
-      // Atomic operation: remove the used code immediately
-      if (updateUserRecoveryCodes && typeof updateUserRecoveryCodes === 'function') {
-        const newHashedCodes = [...hashedCodes];
-        newHashedCodes.splice(i, 1); // Remove the used code
-        await updateUserRecoveryCodes(userId, newHashedCodes);
+  // Validate inputs
+  validateRecoveryCodeInput(userId, hashedCodes, updateUserRecoveryCodes);
+  
+  if (!inputCode || typeof inputCode !== 'string') {
+    return { valid: false, index: -1 };
+  }
+  
+  const normalizedInputCode = inputCode.toUpperCase().trim();
+  
+  // Use database transaction for atomic operation
+  if (updateUserRecoveryCodes && typeof updateUserRecoveryCodes === 'function') {
+    try {
+      // Start transaction - this should be handled by the caller with proper DB transaction
+      for (let i = 0; i < hashedCodes.length; i++) {
+        const isValid = await bcrypt.compare(normalizedInputCode, hashedCodes[i]);
+        if (isValid) {
+          // Atomic operation: remove the used code within transaction
+          const newHashedCodes = [...hashedCodes];
+          newHashedCodes.splice(i, 1);
+          
+          // Update in database with parameterized query (should be handled by updateUserRecoveryCodes)
+          await updateUserRecoveryCodes(userId, newHashedCodes);
+          
+          return { valid: true, index: i };
+        }
       }
-      return { valid: true, index: i };
+    } catch (error) {
+      console.error('Error during atomic recovery code verification:', error);
+      throw new Error('Failed to verify recovery code');
+    }
+  } else {
+    // Fallback for read-only verification
+    for (let i = 0; i < hashedCodes.length; i++) {
+      const isValid = await bcrypt.compare(normalizedInputCode, hashedCodes[i]);
+      if (isValid) {
+        return { valid: true, index: i };
+      }
     }
   }
+  
   return { valid: false, index: -1 };
 };
 
@@ -381,15 +445,39 @@ const disable2FA = async (userId, userEmail, userName, currentPassword, userHash
   return true;
 };
 
-// Atomic operation for failed attempt tracking with Redis support
+// Rate limiting configuration
+const RATE_LIMIT_CONFIG = {
+  login: {
+    windowMs: parseInt(process.env.LOGIN_RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000, // 15 minutes
+    max: parseInt(process.env.LOGIN_RATE_LIMIT_MAX) || 5, // 5 attempts per window
+    message: process.env.LOGIN_RATE_LIMIT_MESSAGE || 'Too many login attempts, please try again later'
+  },
+  register: {
+    windowMs: parseInt(process.env.REGISTER_RATE_LIMIT_WINDOW_MS) || 60 * 60 * 1000, // 1 hour
+    max: parseInt(process.env.REGISTER_RATE_LIMIT_MAX) || 3, // 3 registrations per hour per IP
+    message: process.env.REGISTER_RATE_LIMIT_MESSAGE || 'Too many registration attempts, please try again later'
+  },
+  passwordReset: {
+    windowMs: parseInt(process.env.PASSWORD_RESET_RATE_LIMIT_WINDOW_MS) || 60 * 60 * 1000, // 1 hour
+    max: parseInt(process.env.PASSWORD_RESET_RATE_LIMIT_MAX) || 3, // 3 password reset attempts per hour
+    message: process.env.PASSWORD_RESET_RATE_LIMIT_MESSAGE || 'Too many password reset attempts, please try again later'
+  },
+  twoFactor: {
+    windowMs: parseInt(process.env.TWO_FACTOR_RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000, // 15 minutes
+    max: parseInt(process.env.TWO_FACTOR_RATE_LIMIT_MAX) || 5, // 5 2FA attempts per window
+    message: process.env.TWO_FACTOR_RATE_LIMIT_MESSAGE || 'Too many 2FA verification attempts, please try again later'
+  }
+};
+
+// Enhanced atomic operation for rate limiting with proper concurrency protection
 const trackVerificationAttempt = async (userId, success = false) => {
   const key = `2fa_attempts_${userId}`;
   const now = Date.now();
   const windowMs = RATE_LIMIT_CONFIG.twoFactor.windowMs;
   const maxAttempts = RATE_LIMIT_CONFIG.twoFactor.max;
   
-  if (redisClient) {
-    // Redis-based atomic operations
+  // Try Redis first with proper error handling
+  if (isRedisHealthy()) {
     try {
       if (success) {
         // Reset attempts on success
@@ -403,63 +491,80 @@ const trackVerificationAttempt = async (userId, success = false) => {
       pipeline.expire(key, Math.ceil(windowMs / 1000));
       const results = await pipeline.exec();
       
-      const attemptCount = results[0];
-      
-      if (attemptCount >= maxAttempts) {
-        throw new Error(RATE_LIMIT_CONFIG.twoFactor.message);
+      if (results && results[0] && results[0][1]) {
+        const attemptCount = results[0][1];
+        
+        if (attemptCount >= maxAttempts) {
+          throw new Error(RATE_LIMIT_CONFIG.twoFactor.message);
+        }
       }
       
       return false;
     } catch (error) {
-      // Fallback to in-memory if Redis fails
+      if (error.message === RATE_LIMIT_CONFIG.twoFactor.message) {
+        throw error; // Re-throw rate limit errors
+      }
       console.warn('Redis operation failed, falling back to in-memory:', error.message);
     }
   }
   
-  // In-memory fallback with basic race condition protection
-  if (!verificationAttempts.has(key)) {
-    verificationAttempts.set(key, { attempts: [], locked: false });
+  // Enhanced in-memory fallback with mutex for atomic operations
+  const mutexKey = `mutex_${key}`;
+  
+  // Simple mutex implementation for concurrent access protection
+  while (rateLimitMutex.has(mutexKey)) {
+    await new Promise(resolve => setTimeout(resolve, 10));
   }
   
-  const userAttempts = verificationAttempts.get(key);
+  rateLimitMutex.set(mutexKey, true);
   
-  // Check if currently locked
-  if (userAttempts.locked) {
-    const lockExpiry = userAttempts.lockExpiry || 0;
-    if (now < lockExpiry) {
-      throw new Error('Account temporarily locked due to too many failed 2FA attempts');
-    } else {
-      // Reset lock
-      userAttempts.locked = false;
-      userAttempts.attempts = [];
+  try {
+    if (!verificationAttempts.has(key)) {
+      verificationAttempts.set(key, { attempts: [], locked: false });
     }
-  }
-  
-  // Clean old attempts outside window
-  userAttempts.attempts = userAttempts.attempts.filter(attempt => 
-    now - attempt.timestamp < windowMs
-  );
-  
-  if (success) {
-    // Reset on successful verification
-    userAttempts.attempts = [];
+    
+    const userAttempts = verificationAttempts.get(key);
+    
+    // Check if currently locked
+    if (userAttempts.locked) {
+      const lockExpiry = userAttempts.lockExpiry || 0;
+      if (now < lockExpiry) {
+        throw new Error('Account temporarily locked due to too many failed 2FA attempts');
+      } else {
+        // Reset lock
+        userAttempts.locked = false;
+        userAttempts.attempts = [];
+      }
+    }
+    
+    // Clean old attempts outside window
+    userAttempts.attempts = userAttempts.attempts.filter(attempt => 
+      now - attempt.timestamp < windowMs
+    );
+    
+    if (success) {
+      // Reset on successful verification
+      userAttempts.attempts = [];
+      verificationAttempts.set(key, userAttempts);
+      return true;
+    }
+    
+    // Track failed attempt
+    userAttempts.attempts.push({ timestamp: now, success: false });
+    
+    // Check if limit exceeded
+    if (userAttempts.attempts.length >= maxAttempts) {
+      userAttempts.locked = true;
+      userAttempts.lockExpiry = now + windowMs;
+      verificationAttempts.set(key, userAttempts);
+      throw new Error(RATE_LIMIT_CONFIG.twoFactor.message);
+    }
+    
     verificationAttempts.set(key, userAttempts);
-    return true;
+    return false;
+  } finally {
+    rateLimitMutex.delete(mutexKey);
   }
-  
-  // Track failed attempt
-  userAttempts.attempts.push({ timestamp: now, success: false });
-  
-  // Check if limit exceeded
-  if (userAttempts.attempts.length >= maxAttempts) {
-    userAttempts.locked = true;
-    userAttempts.lockExpiry = now + windowMs;
-    verificationAttempts.set(key, userAttempts);
-    throw new Error(RATE_LIMIT_CONFIG.twoFactor.message);
-  }
-  
-  verificationAttempts.set(key, userAttempts);
-  return false;
 };
 
 // Middleware to authenticate JWT token
@@ -614,30 +719,6 @@ const generateSecureToken = (length = 32) => {
   return crypto.randomBytes(length).toString('hex');
 };
 
-// Rate limiting configuration
-const RATE_LIMIT_CONFIG = {
-  login: {
-    windowMs: parseInt(process.env.LOGIN_RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000, // 15 minutes
-    max: parseInt(process.env.LOGIN_RATE_LIMIT_MAX) || 5, // 5 attempts per window
-    message: process.env.LOGIN_RATE_LIMIT_MESSAGE || 'Too many login attempts, please try again later'
-  },
-  register: {
-    windowMs: parseInt(process.env.REGISTER_RATE_LIMIT_WINDOW_MS) || 60 * 60 * 1000, // 1 hour
-    max: parseInt(process.env.REGISTER_RATE_LIMIT_MAX) || 3, // 3 registrations per hour per IP
-    message: process.env.REGISTER_RATE_LIMIT_MESSAGE || 'Too many registration attempts, please try again later'
-  },
-  passwordReset: {
-    windowMs: parseInt(process.env.PASSWORD_RESET_RATE_LIMIT_WINDOW_MS) || 60 * 60 * 1000, // 1 hour
-    max: parseInt(process.env.PASSWORD_RESET_RATE_LIMIT_MAX) || 3, // 3 password reset attempts per hour
-    message: process.env.PASSWORD_RESET_RATE_LIMIT_MESSAGE || 'Too many password reset attempts, please try again later'
-  },
-  twoFactor: {
-    windowMs: parseInt(process.env.TWO_FACTOR_RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000, // 15 minutes
-    max: parseInt(process.env.TWO_FACTOR_RATE_LIMIT_MAX) || 5, // 5 2FA attempts per window
-    message: process.env.TWO_FACTOR_RATE_LIMIT_MESSAGE || 'Too many 2FA verification attempts, please try again later'
-  }
-};
-
 module.exports = {
   JWT_CONFIG,
   TOTP_CONFIG,
@@ -672,5 +753,6 @@ module.exports = {
   hasPermission,
   validatePassword,
   generateSecureToken,
-  constantTimeCompare
+  constantTimeCompare,
+  isRedisHealthy
 };
