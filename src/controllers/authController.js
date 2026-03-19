@@ -36,6 +36,33 @@ const hashBackupCodes = async (codes) => {
   return hashedCodes;
 };
 
+// Constant-time TOTP verification to prevent timing attacks
+const verifyTOTP = (secret, token) => {
+  const window = 2;
+  const timeStep = Math.floor(Date.now() / 30000);
+  let isValid = false;
+  
+  // Check current time step and surrounding window
+  for (let i = -window; i <= window; i++) {
+    const testToken = speakeasy.totp({
+      secret: secret,
+      encoding: 'base32',
+      time: (timeStep + i) * 30
+    });
+    
+    // Use crypto.timingSafeEqual for constant-time comparison
+    if (testToken.length === token.length) {
+      const tokenBuffer = Buffer.from(token);
+      const testTokenBuffer = Buffer.from(testToken);
+      if (crypto.timingSafeEqual(tokenBuffer, testTokenBuffer)) {
+        isValid = true;
+      }
+    }
+  }
+  
+  return isValid;
+};
+
 // Check rate limiting for 2FA attempts
 const checkTwoFARateLimit = (userId) => {
   const key = userId.toString();
@@ -55,8 +82,53 @@ const checkTwoFARateLimit = (userId) => {
   return { allowed: true };
 };
 
-// Record failed 2FA attempt
-const recordFailedTwoFAAttempt = (userId) => {
+// Atomic increment for failed 2FA attempts using database
+const recordFailedTwoFAAttemptAtomic = async (userId) => {
+  try {
+    // Use atomic increment operation in database to prevent race conditions
+    const result = await User.findByIdAndUpdate(
+      userId,
+      {
+        $inc: { 'twoFAFailedAttempts': 1 },
+        $setOnInsert: { 'twoFAFirstFailedAttempt': new Date() }
+      },
+      {
+        new: true,
+        upsert: false,
+        select: 'twoFAFailedAttempts twoFAFirstFailedAttempt'
+      }
+    );
+
+    if (!result) {
+      throw new Error('User not found');
+    }
+
+    // Reset counter if 15 minutes have passed
+    const now = new Date();
+    if (result.twoFAFirstFailedAttempt && 
+        (now - result.twoFAFirstFailedAttempt) > 15 * 60 * 1000) {
+      await User.findByIdAndUpdate(userId, {
+        $set: {
+          'twoFAFailedAttempts': 1,
+          'twoFAFirstFailedAttempt': now
+        }
+      });
+      return 1;
+    }
+
+    // Log failed attempt
+    console.warn(`Failed 2FA attempt for user ${userId}. Attempt ${result.twoFAFailedAttempts}/5`);
+    
+    return result.twoFAFailedAttempts;
+  } catch (error) {
+    console.error('Error recording failed 2FA attempt:', error);
+    // Fallback to memory-based tracking if database operation fails
+    return recordFailedTwoFAAttemptMemory(userId);
+  }
+};
+
+// Fallback memory-based failed attempt recording
+const recordFailedTwoFAAttemptMemory = (userId) => {
   const key = userId.toString();
   const now = Date.now();
   const attempts = twoFAAttempts.get(key) || { count: 0, firstAttempt: now };
@@ -69,7 +141,7 @@ const recordFailedTwoFAAttempt = (userId) => {
   twoFAAttempts.set(key, attempts);
   
   // Log failed attempt
-  console.warn(`Failed 2FA attempt for user ${userId}. Attempt ${attempts.count}/5`);
+  console.warn(`Failed 2FA attempt for user ${userId}. Attempt ${attempts.count}/5 (memory fallback)`);
   
   return attempts.count;
 };
@@ -263,17 +335,12 @@ exports.login = async (req, res) => {
         }
       }
     } else {
-      // Verify TOTP code
-      isValidTwoFactor = speakeasy.totp.verify({
-        secret: user.twoFactorSecret,
-        encoding: 'base32',
-        token: twoFactorCode,
-        window: 2 // Allow 2 steps tolerance
-      });
+      // Use constant-time TOTP verification
+      isValidTwoFactor = verifyTOTP(user.twoFactorSecret, twoFactorCode);
     }
 
     if (!isValidTwoFactor) {
-      const failedAttempts = recordFailedTwoFAAttempt(user._id);
+      const failedAttempts = await recordFailedTwoFAAttemptAtomic(user._id);
       
       // Lock account after 10 failed 2FA attempts
       if (failedAttempts >= 10) {
@@ -299,6 +366,14 @@ exports.login = async (req, res) => {
 
     // Clear any existing rate limiting
     twoFAAttempts.delete(user._id.toString());
+    
+    // Reset database-based failed attempt counters
+    await User.findByIdAndUpdate(user._id, {
+      $unset: {
+        'twoFAFailedAttempts': 1,
+        'twoFAFirstFailedAttempt': 1
+      }
+    });
 
     // Unlock account if it was locked
     if (user.accountLocked) {
@@ -438,13 +513,8 @@ exports.verify2FA = async (req, res) => {
       });
     }
 
-    // Verify the token
-    const isValid = speakeasy.totp.verify({
-      secret: user.twoFactorTempSecret,
-      encoding: 'base32',
-      token: token,
-      window: 2
-    });
+    // Use constant-time TOTP verification
+    const isValid = verifyTOTP(user.twoFactorTempSecret, token);
 
     if (!isValid) {
       return res.status(400).json({
@@ -539,13 +609,8 @@ exports.disable2FA = async (req, res) => {
         }
       }
     } else {
-      // Verify TOTP code
-      isValid = speakeasy.totp.verify({
-        secret: user.twoFactorSecret,
-        encoding: 'base32',
-        token: twoFactorCode,
-        window: 2
-      });
+      // Use constant-time TOTP verification
+      isValid = verifyTOTP(user.twoFactorSecret, twoFactorCode);
     }
 
     if (!isValid) {
@@ -612,13 +677,8 @@ exports.regenerateBackupCodes = async (req, res) => {
       });
     }
 
-    // Verify 2FA code
-    const isValidTwoFactor = speakeasy.totp.verify({
-      secret: user.twoFactorSecret,
-      encoding: 'base32',
-      token: twoFactorCode,
-      window: 2
-    });
+    // Use constant-time TOTP verification
+    const isValidTwoFactor = verifyTOTP(user.twoFactorSecret, twoFactorCode);
 
     if (!isValidTwoFactor) {
       return res.status(400).json({
