@@ -4,6 +4,7 @@ const speakeasy = require('speakeasy');
 const qrcode = require('qrcode');
 const crypto = require('crypto');
 const User = require('../models/User');
+const mongoose = require('mongoose');
 
 // Rate limiting for 2FA attempts
 const twoFAAttempts = new Map();
@@ -265,11 +266,25 @@ exports.login = async (req, res) => {
     // Verify password
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid) {
+      // Use atomic increment for failed attempt counter to prevent race conditions
+      await User.findByIdAndUpdate(
+        user._id,
+        { $inc: { 'failedAttempts': 1 } },
+        { new: true }
+      );
+      
       return res.status(401).json({
         success: false,
         message: 'Invalid email or password'
       });
     }
+
+    // Reset failed attempts counter on successful password verification
+    await User.findByIdAndUpdate(
+      user._id,
+      { $unset: { 'failedAttempts': 1 } },
+      { new: true }
+    );
 
     // If 2FA is not enabled, complete login
     if (!user.twoFactorEnabled) {
@@ -487,6 +502,8 @@ exports.setup2FA = async (req, res) => {
 
 // Verify and enable 2FA
 exports.verify2FA = async (req, res) => {
+  const session = await mongoose.startSession();
+  
   try {
     const { token } = req.body;
     const userId = req.user.userId;
@@ -498,61 +515,86 @@ exports.verify2FA = async (req, res) => {
       });
     }
 
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
-    }
+    await session.withTransaction(async () => {
+      const user = await User.findById(userId).session(session);
+      if (!user) {
+        throw new Error('User not found');
+      }
 
-    if (!user.twoFactorTempSecret) {
-      return res.status(400).json({
-        success: false,
-        message: 'No 2FA setup in progress. Please start the setup process first.'
-      });
-    }
+      if (!user.twoFactorTempSecret) {
+        throw new Error('No 2FA setup in progress. Please start the setup process first.');
+      }
 
-    // Use constant-time TOTP verification
-    const isValid = verifyTOTP(user.twoFactorTempSecret, token);
+      // Use constant-time TOTP verification
+      const isValid = verifyTOTP(user.twoFactorTempSecret, token);
 
-    if (!isValid) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid verification code'
-      });
-    }
+      if (!isValid) {
+        throw new Error('Invalid verification code');
+      }
 
-    // Generate backup codes
-    const backupCodes = generateBackupCodes();
-    const hashedBackupCodes = await hashBackupCodes(backupCodes);
+      // Generate backup codes
+      const backupCodes = generateBackupCodes();
+      const hashedBackupCodes = await hashBackupCodes(backupCodes);
 
-    // Enable 2FA
-    user.twoFactorEnabled = true;
-    user.twoFactorSecret = user.twoFactorTempSecret;
-    user.twoFactorTempSecret = undefined;
-    user.backupCodes = hashedBackupCodes;
-    await user.save();
+      // Enable 2FA with transaction protection
+      user.twoFactorEnabled = true;
+      user.twoFactorSecret = user.twoFactorTempSecret;
+      user.twoFactorTempSecret = undefined;
+      user.backupCodes = hashedBackupCodes;
+      await user.save({ session });
+
+      // Store backup codes for response
+      req.generatedBackupCodes = backupCodes;
+    });
+
+    await session.commitTransaction();
 
     res.json({
       success: true,
       message: 'Two-factor authentication enabled successfully',
       data: {
-        backupCodes: backupCodes
+        backupCodes: req.generatedBackupCodes
       }
     });
 
   } catch (error) {
+    await session.abortTransaction();
     console.error('2FA verification error:', error);
+    
+    if (error.message === 'User not found') {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+    
+    if (error.message === 'No 2FA setup in progress. Please start the setup process first.') {
+      return res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+    
+    if (error.message === 'Invalid verification code') {
+      return res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+    
     res.status(500).json({
       success: false,
       message: 'Internal server error during 2FA verification'
     });
+  } finally {
+    await session.endSession();
   }
 };
 
 // Disable 2FA
 exports.disable2FA = async (req, res) => {
+  const session = await mongoose.startSession();
+  
   try {
     const { password, twoFactorCode, useBackupCode = false } = req.body;
     const userId = req.user.userId;
@@ -564,67 +606,56 @@ exports.disable2FA = async (req, res) => {
       });
     }
 
-    const user = await User.findById(userId).select('+password +twoFactorSecret +backupCodes');
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
-    }
+    await session.withTransaction(async () => {
+      const user = await User.findById(userId).select('+password +twoFactorSecret +backupCodes').session(session);
+      if (!user) {
+        throw new Error('User not found');
+      }
 
-    if (!user.twoFactorEnabled) {
-      return res.status(400).json({
-        success: false,
-        message: 'Two-factor authentication is not enabled'
-      });
-    }
+      if (!user.twoFactorEnabled) {
+        throw new Error('Two-factor authentication is not enabled');
+      }
 
-    // Verify current password
-    const isPasswordValid = await bcrypt.compare(password, user.password);
-    if (!isPasswordValid) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid password'
-      });
-    }
+      // Verify current password
+      const isPasswordValid = await bcrypt.compare(password, user.password);
+      if (!isPasswordValid) {
+        throw new Error('Invalid password');
+      }
 
-    // Verify 2FA code or backup code
-    if (!twoFactorCode) {
-      return res.status(400).json({
-        success: false,
-        message: 'Two-factor authentication code or backup code is required'
-      });
-    }
+      // Verify 2FA code or backup code
+      if (!twoFactorCode) {
+        throw new Error('Two-factor authentication code or backup code is required');
+      }
 
-    let isValid = false;
+      let isValid = false;
 
-    if (useBackupCode) {
-      // Verify backup code
-      if (user.backupCodes && user.backupCodes.length > 0) {
-        for (const hashedCode of user.backupCodes) {
-          if (await bcrypt.compare(twoFactorCode, hashedCode)) {
-            isValid = true;
-            break;
+      if (useBackupCode) {
+        // Verify backup code
+        if (user.backupCodes && user.backupCodes.length > 0) {
+          for (const hashedCode of user.backupCodes) {
+            if (await bcrypt.compare(twoFactorCode, hashedCode)) {
+              isValid = true;
+              break;
+            }
           }
         }
+      } else {
+        // Use constant-time TOTP verification
+        isValid = verifyTOTP(user.twoFactorSecret, twoFactorCode);
       }
-    } else {
-      // Use constant-time TOTP verification
-      isValid = verifyTOTP(user.twoFactorSecret, twoFactorCode);
-    }
 
-    if (!isValid) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid two-factor authentication code'
-      });
-    }
+      if (!isValid) {
+        throw new Error('Invalid two-factor authentication code');
+      }
 
-    // Disable 2FA
-    user.twoFactorEnabled = false;
-    user.twoFactorSecret = undefined;
-    user.backupCodes = [];
-    await user.save();
+      // Disable 2FA with transaction protection
+      user.twoFactorEnabled = false;
+      user.twoFactorSecret = undefined;
+      user.backupCodes = [];
+      await user.save({ session });
+    });
+
+    await session.commitTransaction();
 
     res.json({
       success: true,
@@ -632,11 +663,50 @@ exports.disable2FA = async (req, res) => {
     });
 
   } catch (error) {
+    await session.abortTransaction();
     console.error('Disable 2FA error:', error);
+    
+    if (error.message === 'User not found') {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+    
+    if (error.message === 'Two-factor authentication is not enabled') {
+      return res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+    
+    if (error.message === 'Invalid password') {
+      return res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+    
+    if (error.message === 'Two-factor authentication code or backup code is required') {
+      return res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+    
+    if (error.message === 'Invalid two-factor authentication code') {
+      return res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+    
     res.status(500).json({
       success: false,
       message: 'Internal server error while disabling 2FA'
     });
+  } finally {
+    await session.endSession();
   }
 };
 
