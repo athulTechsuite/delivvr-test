@@ -379,6 +379,36 @@ describe('TwoFactorAuth Component', () => {
         expect(screen.getByText('Two-Factor Authentication has been disabled')).toBeInTheDocument();
       });
     });
+
+    it('should show error when disabling 2FA with invalid credentials', async () => {
+      mockAuthAPI.get2FAStatus = jest.fn().mockResolvedValue({
+        isEnabled: true,
+        enabledAt: '2023-12-01T00:00:00Z'
+      });
+      mockAuthAPI.disable2FA = jest.fn().mockRejectedValue({
+        response: { data: { message: 'Invalid credentials' } }
+      });
+
+      render(<TwoFactorAuth />);
+
+      await waitFor(() => {
+        fireEvent.click(screen.getByText('Disable'));
+      });
+
+      await waitFor(() => {
+        fireEvent.change(screen.getByPlaceholderText('Current password'), {
+          target: { value: 'wrongpassword' }
+        });
+        fireEvent.change(screen.getByPlaceholderText('6-digit code from your authenticator'), {
+          target: { value: '000000' }
+        });
+        fireEvent.click(screen.getByText('Disable 2FA'));
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText('Invalid credentials')).toBeInTheDocument();
+      });
+    });
   });
 
   describe('TC-009: Regenerate backup codes', () => {
@@ -446,6 +476,98 @@ describe('TwoFactorAuth Component', () => {
 
       await waitFor(() => {
         expect(screen.getByText('Invalid credentials')).toBeInTheDocument();
+      });
+    });
+
+    it('should provide download functionality for regenerated backup codes', async () => {
+      const newBackupCodes = ['NEW1234', 'NEW5678', 'NEW9012', 'NEW3456', 'NEW7890', 'NEW1357', 'NEW2468', 'NEW8642', 'NEW9753', 'NEW0246'];
+      
+      // Mock URL.createObjectURL for download functionality
+      global.URL.createObjectURL = jest.fn(() => 'blob:mock-url');
+      global.URL.revokeObjectURL = jest.fn();
+      
+      // Mock createElement and click for download
+      const mockLink = {
+        href: '',
+        download: '',
+        click: jest.fn()
+      };
+      jest.spyOn(document, 'createElement').mockReturnValue(mockLink);
+
+      mockAuthAPI.get2FAStatus = jest.fn().mockResolvedValue({
+        isEnabled: true,
+        enabledAt: '2023-12-01T00:00:00Z'
+      });
+      mockAuthAPI.regenerateBackupCodes = jest.fn().mockResolvedValue({
+        backupCodes: newBackupCodes
+      });
+
+      render(<TwoFactorAuth />);
+
+      await waitFor(() => {
+        fireEvent.click(screen.getByText('Regenerate Backup Codes'));
+      });
+
+      await waitFor(() => {
+        fireEvent.change(screen.getByPlaceholderText('Current password'), {
+          target: { value: 'userpassword' }
+        });
+        fireEvent.change(screen.getByPlaceholderText('6-digit code from your authenticator'), {
+          target: { value: '123456' }
+        });
+        fireEvent.click(screen.getByText('Regenerate Codes'));
+      });
+
+      await waitFor(() => {
+        const downloadButton = screen.getByText('Download New Codes');
+        fireEvent.click(downloadButton);
+
+        expect(document.createElement).toHaveBeenCalledWith('a');
+        expect(mockLink.click).toHaveBeenCalled();
+        expect(mockLink.download).toBe('delivvr-backup-codes.txt');
+      });
+    });
+  });
+
+  describe('Error Handling and Edge Cases', () => {
+    it('should handle network errors gracefully', async () => {
+      mockAuthAPI.get2FAStatus = jest.fn().mockRejectedValue(new Error('Network error'));
+
+      render(<TwoFactorAuth />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed to load 2FA status. Please try again.')).toBeInTheDocument();
+      });
+    });
+
+    it('should validate 2FA code format', async () => {
+      const mockSetupData = {
+        qrCode: 'data:image/png;base64,mockedqrcode',
+        manualEntryKey: 'JBSWY3DPEHPK3PXP',
+        backupCodes: ['CODE1234', 'CODE5678', 'CODE9012', 'CODE3456', 'CODE7890', 'CODE1357', 'CODE2468', 'CODE8642', 'CODE9753', 'CODE0246']
+      };
+
+      mockAuthAPI.get2FAStatus = jest.fn().mockResolvedValue({ isEnabled: false });
+      mockAuthAPI.setup2FA = jest.fn().mockResolvedValue(mockSetupData);
+
+      render(<TwoFactorAuth />);
+
+      fireEvent.click(screen.getByText('Enable Two-Factor Authentication'));
+      
+      await act(async () => {
+        fireEvent.change(screen.getByPlaceholderText('Current password'), {
+          target: { value: 'userpassword' }
+        });
+        fireEvent.click(screen.getByText('Next'));
+      });
+
+      await waitFor(() => {
+        fireEvent.change(screen.getByPlaceholderText('Enter 6-digit code'), {
+          target: { value: '12345' } // Invalid code length
+        });
+        fireEvent.click(screen.getByText('Verify & Enable'));
+
+        expect(screen.getByText('Please enter a valid 6-digit code')).toBeInTheDocument();
       });
     });
   });
