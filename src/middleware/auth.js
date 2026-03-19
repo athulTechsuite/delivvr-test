@@ -50,6 +50,61 @@ const authenticateToken = async (req, res, next) => {
   }
 };
 
+// Middleware to verify 2FA is completed for authenticated users
+const require2FA = async (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ 
+      success: false, 
+      message: 'Authentication required' 
+    });
+  }
+
+  // Skip 2FA check if user hasn't enabled it
+  if (!req.user.twoFactorEnabled) {
+    return next();
+  }
+
+  // Check if token includes 2FA verification flag
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  
+  if (!token) {
+    return res.status(401).json({ 
+      success: false, 
+      message: 'Access token required' 
+    });
+  }
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    
+    // Check if this token was issued after successful 2FA verification
+    if (!decoded.twoFactorVerified) {
+      return res.status(403).json({ 
+        success: false, 
+        message: '2FA verification required',
+        code: 'REQUIRE_2FA'
+      });
+    }
+
+    next();
+  } catch (error) {
+    return res.status(403).json({ 
+      success: false, 
+      message: 'Invalid token' 
+    });
+  }
+};
+
+// Combined middleware that checks auth and 2FA in one step
+const authenticateWithTwoFactor = async (req, res, next) => {
+  await authenticateToken(req, res, async (error) => {
+    if (error) return;
+    
+    await require2FA(req, res, next);
+  });
+};
+
 // Middleware to check if user has required role(s)
 const authorizeRoles = (...allowedRoles) => {
   return (req, res, next) => {
@@ -175,12 +230,48 @@ const authRateLimit = (maxAttempts = 5, windowMs = 15 * 60 * 1000) => {
   };
 };
 
+// Enhanced rate limiting for 2FA attempts (stricter limits)
+const twoFactorRateLimit = (maxAttempts = 3, windowMs = 5 * 60 * 1000) => {
+  const attempts = new Map();
+
+  return (req, res, next) => {
+    const identifier = req.body.email || req.user?.email || req.ip;
+    const now = Date.now();
+    
+    if (!attempts.has(identifier)) {
+      attempts.set(identifier, { count: 1, resetTime: now + windowMs });
+      return next();
+    }
+
+    const userAttempts = attempts.get(identifier);
+    
+    if (now > userAttempts.resetTime) {
+      attempts.set(identifier, { count: 1, resetTime: now + windowMs });
+      return next();
+    }
+
+    if (userAttempts.count >= maxAttempts) {
+      return res.status(429).json({
+        success: false,
+        message: 'Too many 2FA attempts. Please try again later.',
+        retryAfter: Math.ceil((userAttempts.resetTime - now) / 1000)
+      });
+    }
+
+    userAttempts.count++;
+    next();
+  };
+};
+
 module.exports = {
   authenticateToken,
+  require2FA,
+  authenticateWithTwoFactor,
   authorizeRoles,
   requireAdmin,
   requireVendorOrAdmin,
   requireOwnershipOrAdmin,
   optionalAuth,
-  authRateLimit
+  authRateLimit,
+  twoFactorRateLimit
 };

@@ -1,5 +1,8 @@
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const speakeasy = require('speakeasy');
+const qrcode = require('qrcode');
+const crypto = require('crypto');
 
 // Validate JWT secret is properly configured
 if (!process.env.JWT_SECRET) {
@@ -11,6 +14,16 @@ const JWT_CONFIG = {
   secret: process.env.JWT_SECRET,
   expiresIn: process.env.JWT_EXPIRES_IN || '24h',
   refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '30d'
+};
+
+// 2FA Configuration
+const TWO_FA_CONFIG = {
+  serviceName: process.env.APP_NAME || 'Delivvr',
+  window: 1, // Allow 1 window before and after current window (30 seconds each)
+  step: 30, // 30 second time step
+  encoding: 'base32',
+  backupCodeLength: 8,
+  backupCodeCount: 10
 };
 
 // User Roles
@@ -91,6 +104,64 @@ const comparePassword = async (password, hashedPassword) => {
   return await bcrypt.compare(password, hashedPassword);
 };
 
+// Generate 2FA Secret
+const generate2FASecret = (userEmail) => {
+  return speakeasy.generateSecret({
+    name: `${TWO_FA_CONFIG.serviceName} (${userEmail})`,
+    service: TWO_FA_CONFIG.serviceName,
+    length: 32,
+    encoding: TWO_FA_CONFIG.encoding
+  });
+};
+
+// Generate QR Code for 2FA Setup
+const generate2FAQRCode = async (secret) => {
+  try {
+    return await qrcode.toDataURL(secret.otpauth_url);
+  } catch (error) {
+    throw new Error('Failed to generate QR code');
+  }
+};
+
+// Verify 2FA Token
+const verify2FAToken = (token, secret) => {
+  return speakeasy.totp.verify({
+    secret: secret,
+    encoding: TWO_FA_CONFIG.encoding,
+    token: token,
+    step: TWO_FA_CONFIG.step,
+    window: TWO_FA_CONFIG.window
+  });
+};
+
+// Generate Backup Codes
+const generateBackupCodes = () => {
+  const codes = [];
+  for (let i = 0; i < TWO_FA_CONFIG.backupCodeCount; i++) {
+    codes.push(crypto.randomBytes(TWO_FA_CONFIG.backupCodeLength).toString('hex').toUpperCase());
+  }
+  return codes;
+};
+
+// Hash Backup Codes
+const hashBackupCodes = async (codes) => {
+  const hashedCodes = [];
+  for (const code of codes) {
+    hashedCodes.push(await bcrypt.hash(code, 10));
+  }
+  return hashedCodes;
+};
+
+// Verify Backup Code
+const verifyBackupCode = async (inputCode, hashedCodes) => {
+  for (let i = 0; i < hashedCodes.length; i++) {
+    if (hashedCodes[i] && await bcrypt.compare(inputCode, hashedCodes[i])) {
+      return i; // Return index of used backup code
+    }
+  }
+  return -1; // No match found
+};
+
 // Middleware to authenticate JWT token
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
@@ -113,6 +184,27 @@ const authenticateToken = (req, res, next) => {
       message: 'Invalid or expired token' 
     });
   }
+};
+
+// Middleware to check 2FA requirement
+const require2FA = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ 
+      success: false, 
+      message: 'Authentication required' 
+    });
+  }
+
+  // If user has 2FA enabled but token doesn't indicate 2FA verification
+  if (req.user.twoFactorEnabled && !req.user.twoFactorVerified) {
+    return res.status(403).json({ 
+      success: false, 
+      message: 'Two-factor authentication required',
+      requiresTwoFactor: true
+    });
+  }
+
+  next();
 };
 
 // Middleware to authorize user roles
@@ -207,9 +299,27 @@ const validatePassword = (password) => {
   };
 };
 
+// Validate 2FA Token Format
+const validate2FAToken = (token) => {
+  if (!token) {
+    return { isValid: false, error: '2FA code is required' };
+  }
+
+  if (typeof token !== 'string') {
+    return { isValid: false, error: '2FA code must be a string' };
+  }
+
+  // Remove spaces and check if it's 6 digits
+  const cleanToken = token.replace(/\s/g, '');
+  if (!/^\d{6}$/.test(cleanToken)) {
+    return { isValid: false, error: '2FA code must be exactly 6 digits' };
+  }
+
+  return { isValid: true, cleanToken };
+};
+
 // Generate secure random string for tokens
 const generateSecureToken = (length = 32) => {
-  const crypto = require('crypto');
   return crypto.randomBytes(length).toString('hex');
 };
 
@@ -229,11 +339,17 @@ const RATE_LIMIT_CONFIG = {
     windowMs: 60 * 60 * 1000, // 1 hour
     max: 3, // 3 password reset attempts per hour
     message: 'Too many password reset attempts, please try again later'
+  },
+  twoFactor: {
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 5, // 5 2FA attempts per window
+    message: 'Too many 2FA verification attempts, please try again later'
   }
 };
 
 module.exports = {
   JWT_CONFIG,
+  TWO_FA_CONFIG,
   USER_ROLES,
   ROLE_PERMISSIONS,
   RATE_LIMIT_CONFIG,
@@ -242,10 +358,18 @@ module.exports = {
   verifyToken,
   hashPassword,
   comparePassword,
+  generate2FASecret,
+  generate2FAQRCode,
+  verify2FAToken,
+  generateBackupCodes,
+  hashBackupCodes,
+  verifyBackupCode,
   authenticateToken,
+  require2FA,
   authorizeRoles,
   requirePermission,
   hasPermission,
   validatePassword,
+  validate2FAToken,
   generateSecureToken
 };
