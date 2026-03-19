@@ -1,5 +1,7 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
+const speakeasy = require('speakeasy');
 
 const userSchema = new mongoose.Schema({
   firstName: {
@@ -69,6 +71,36 @@ const userSchema = new mongoose.Schema({
     default: 0
   },
   lockUntil: Date,
+  // Two-Factor Authentication fields
+  twoFactorAuth: {
+    isEnabled: {
+      type: Boolean,
+      default: false
+    },
+    secret: {
+      type: String,
+      select: false
+    },
+    method: {
+      type: String,
+      enum: ['totp', 'sms'],
+      default: 'totp'
+    },
+    backupCodes: [{
+      code: String,
+      used: {
+        type: Boolean,
+        default: false
+      }
+    }],
+    enabledAt: Date,
+    lastUsed: Date,
+    failedAttempts: {
+      type: Number,
+      default: 0
+    },
+    lockedUntil: Date
+  },
   // Customer specific fields
   wishlist: [{
     type: mongoose.Schema.Types.ObjectId,
@@ -117,6 +149,7 @@ const userSchema = new mongoose.Schema({
 userSchema.index({ email: 1 });
 userSchema.index({ role: 1 });
 userSchema.index({ isActive: 1 });
+userSchema.index({ 'twoFactorAuth.isEnabled': 1 });
 
 // Virtual for full name
 userSchema.virtual('fullName').get(function() {
@@ -126,6 +159,11 @@ userSchema.virtual('fullName').get(function() {
 // Virtual for account lock status
 userSchema.virtual('isLocked').get(function() {
   return !!(this.lockUntil && this.lockUntil > Date.now());
+});
+
+// Virtual for 2FA lock status
+userSchema.virtual('is2FALocked').get(function() {
+  return !!(this.twoFactorAuth.lockedUntil && this.twoFactorAuth.lockedUntil > Date.now());
 });
 
 // Pre-save middleware to hash password
@@ -179,6 +217,112 @@ userSchema.methods.resetLoginAttempts = function() {
   });
 };
 
+// Method to generate 2FA secret
+userSchema.methods.generate2FASecret = function() {
+  const secret = speakeasy.generateSecret({
+    name: `Delivvr (${this.email})`,
+    issuer: 'Delivvr'
+  });
+  
+  this.twoFactorAuth.secret = secret.base32;
+  return secret;
+};
+
+// Method to verify 2FA token
+userSchema.methods.verify2FAToken = function(token) {
+  if (!this.twoFactorAuth.secret) {
+    return false;
+  }
+
+  return speakeasy.totp.verify({
+    secret: this.twoFactorAuth.secret,
+    encoding: 'base32',
+    token: token,
+    window: 2 // Allow 2 steps tolerance
+  });
+};
+
+// Method to generate backup codes
+userSchema.methods.generateBackupCodes = function(count = 10) {
+  const codes = [];
+  for (let i = 0; i < count; i++) {
+    const code = crypto.randomBytes(4).toString('hex').toUpperCase();
+    codes.push({
+      code: code,
+      used: false
+    });
+  }
+  
+  this.twoFactorAuth.backupCodes = codes;
+  return codes.map(c => c.code);
+};
+
+// Method to verify backup code
+userSchema.methods.verifyBackupCode = function(code) {
+  const backupCode = this.twoFactorAuth.backupCodes.find(
+    bc => bc.code === code.toUpperCase() && !bc.used
+  );
+  
+  if (backupCode) {
+    backupCode.used = true;
+    return true;
+  }
+  
+  return false;
+};
+
+// Method to enable 2FA
+userSchema.methods.enable2FA = function(method = 'totp') {
+  this.twoFactorAuth.isEnabled = true;
+  this.twoFactorAuth.method = method;
+  this.twoFactorAuth.enabledAt = new Date();
+  this.twoFactorAuth.failedAttempts = 0;
+  this.twoFactorAuth.lockedUntil = undefined;
+  return this.save();
+};
+
+// Method to disable 2FA
+userSchema.methods.disable2FA = function() {
+  this.twoFactorAuth.isEnabled = false;
+  this.twoFactorAuth.secret = undefined;
+  this.twoFactorAuth.backupCodes = [];
+  this.twoFactorAuth.enabledAt = undefined;
+  this.twoFactorAuth.lastUsed = undefined;
+  this.twoFactorAuth.failedAttempts = 0;
+  this.twoFactorAuth.lockedUntil = undefined;
+  return this.save();
+};
+
+// Method to increment 2FA failed attempts
+userSchema.methods.inc2FAFailedAttempts = function() {
+  // If we have a previous lock that has expired, restart at 1
+  if (this.twoFactorAuth.lockedUntil && this.twoFactorAuth.lockedUntil < Date.now()) {
+    return this.updateOne({
+      $unset: { 'twoFactorAuth.lockedUntil': 1 },
+      $set: { 'twoFactorAuth.failedAttempts': 1 }
+    });
+  }
+
+  const updates = { $inc: { 'twoFactorAuth.failedAttempts': 1 } };
+  
+  // Lock 2FA after 3 failed attempts for 15 minutes
+  if (this.twoFactorAuth.failedAttempts + 1 >= 3 && !this.is2FALocked) {
+    updates.$set = {
+      'twoFactorAuth.lockedUntil': Date.now() + 15 * 60 * 1000 // 15 minutes
+    };
+  }
+
+  return this.updateOne(updates);
+};
+
+// Method to reset 2FA failed attempts
+userSchema.methods.reset2FAFailedAttempts = function() {
+  this.twoFactorAuth.failedAttempts = 0;
+  this.twoFactorAuth.lockedUntil = undefined;
+  this.twoFactorAuth.lastUsed = new Date();
+  return this.save();
+};
+
 // Method to add item to cart
 userSchema.methods.addToCart = function(productId, quantity = 1) {
   const existingItem = this.cart.find(item => 
@@ -227,9 +371,9 @@ userSchema.methods.removeFromWishlist = function(productId) {
 
 // Method to generate password reset token
 userSchema.methods.createPasswordResetToken = function() {
-  const resetToken = require('crypto').randomBytes(32).toString('hex');
+  const resetToken = crypto.randomBytes(32).toString('hex');
   
-  this.passwordResetToken = require('crypto')
+  this.passwordResetToken = crypto
     .createHash('sha256')
     .update(resetToken)
     .digest('hex');
@@ -241,9 +385,9 @@ userSchema.methods.createPasswordResetToken = function() {
 
 // Method to generate email verification token
 userSchema.methods.createEmailVerificationToken = function() {
-  const verificationToken = require('crypto').randomBytes(32).toString('hex');
+  const verificationToken = crypto.randomBytes(32).toString('hex');
   
-  this.emailVerificationToken = require('crypto')
+  this.emailVerificationToken = crypto
     .createHash('sha256')
     .update(verificationToken)
     .digest('hex');
@@ -279,9 +423,11 @@ userSchema.statics.findByCredentials = async function(email, password) {
     await user.resetLoginAttempts();
   }
 
-  // Update last login
-  user.lastLogin = new Date();
-  await user.save();
+  // Update last login only if 2FA is not enabled or already verified
+  if (!user.twoFactorAuth.isEnabled) {
+    user.lastLogin = new Date();
+    await user.save();
+  }
 
   return user;
 };
@@ -301,6 +447,10 @@ userSchema.methods.toJSON = function() {
   delete user.emailVerificationToken;
   delete user.loginAttempts;
   delete user.lockUntil;
+  delete user.twoFactorAuth.secret;
+  delete user.twoFactorAuth.backupCodes;
+  delete user.twoFactorAuth.failedAttempts;
+  delete user.twoFactorAuth.lockedUntil;
   
   return user;
 };

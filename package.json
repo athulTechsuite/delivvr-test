@@ -13,15 +13,20 @@
     "@prisma/client": "^5.7.1",
     "@types/bcryptjs": "^2.4.6",
     "@types/jsonwebtoken": "^9.0.5",
+    "@types/qrcode": "^1.5.5",
+    "@types/speakeasy": "^2.0.10",
     "bcryptjs": "^2.4.3",
     "js-cookie": "^3.0.5",
     "jsonwebtoken": "^9.0.2",
     "lucide-react": "^0.294.0",
     "next": "14.0.4",
+    "qrcode": "^1.5.3",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-hook-form": "^7.48.2",
+    "speakeasy": "^2.0.0",
     "stripe": "^14.9.0",
+    "twilio": "^4.20.1",
     "zustand": "^4.4.7"
   },
   "devDependencies": {
@@ -42,6 +47,7 @@
     "nextjs",
     "typescript",
     "authentication",
+    "two-factor-authentication",
     "role-based-access",
     "dashboard"
   ],
