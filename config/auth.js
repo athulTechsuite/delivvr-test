@@ -3,10 +3,16 @@ const bcrypt = require('bcryptjs');
 const speakeasy = require('speakeasy');
 const qrcode = require('qrcode');
 const crypto = require('crypto');
+const rateLimit = require('express-rate-limit');
 
 // Validate JWT secret is properly configured
 if (!process.env.JWT_SECRET) {
   throw new Error('JWT_SECRET environment variable is required and must be set');
+}
+
+// Validate encryption key for 2FA secrets
+if (!process.env.ENCRYPTION_KEY) {
+  throw new Error('ENCRYPTION_KEY environment variable is required for 2FA secret encryption');
 }
 
 // JWT Configuration
@@ -26,6 +32,14 @@ const TWO_FA_CONFIG = {
   backupCodeCount: 10
 };
 
+// Encryption configuration for 2FA secrets
+const ENCRYPTION_CONFIG = {
+  algorithm: 'aes-256-gcm',
+  keyLength: 32,
+  ivLength: 16,
+  tagLength: 16
+};
+
 // User Roles
 const USER_ROLES = {
   CUSTOMER: 'customer',
@@ -42,7 +56,8 @@ const ROLE_PERMISSIONS = {
     'place_order',
     'view_own_orders',
     'manage_wishlist',
-    'update_profile'
+    'update_profile',
+    'manage_2fa'
   ],
   [USER_ROLES.VENDOR]: [
     'view_products',
@@ -50,7 +65,8 @@ const ROLE_PERMISSIONS = {
     'view_own_orders',
     'manage_inventory',
     'view_sales_analytics',
-    'update_profile'
+    'update_profile',
+    'manage_2fa'
   ],
   [USER_ROLES.ADMIN]: [
     'view_products',
@@ -60,13 +76,15 @@ const ROLE_PERMISSIONS = {
     'manage_categories',
     'view_analytics',
     'manage_vendors',
-    'update_profile'
+    'update_profile',
+    'manage_2fa'
   ],
   [USER_ROLES.SUPER_ADMIN]: [
     'manage_everything',
     'manage_admins',
     'system_settings',
-    'view_system_logs'
+    'view_system_logs',
+    'manage_2fa'
   ]
 };
 
@@ -102,6 +120,48 @@ const hashPassword = async (password) => {
 // Compare Password
 const comparePassword = async (password, hashedPassword) => {
   return await bcrypt.compare(password, hashedPassword);
+};
+
+// Encrypt 2FA Secret
+const encrypt2FASecret = (secret) => {
+  try {
+    const key = Buffer.from(process.env.ENCRYPTION_KEY, 'hex');
+    const iv = crypto.randomBytes(ENCRYPTION_CONFIG.ivLength);
+    const cipher = crypto.createCipher(ENCRYPTION_CONFIG.algorithm, key);
+    cipher.setAAD(Buffer.from('2fa-secret', 'utf8'));
+    
+    let encrypted = cipher.update(secret, 'utf8', 'hex');
+    encrypted += cipher.final('hex');
+    const tag = cipher.getAuthTag();
+    
+    return {
+      encrypted,
+      iv: iv.toString('hex'),
+      tag: tag.toString('hex')
+    };
+  } catch (error) {
+    throw new Error('Failed to encrypt 2FA secret');
+  }
+};
+
+// Decrypt 2FA Secret
+const decrypt2FASecret = (encryptedData) => {
+  try {
+    const key = Buffer.from(process.env.ENCRYPTION_KEY, 'hex');
+    const iv = Buffer.from(encryptedData.iv, 'hex');
+    const tag = Buffer.from(encryptedData.tag, 'hex');
+    
+    const decipher = crypto.createDecipher(ENCRYPTION_CONFIG.algorithm, key);
+    decipher.setAAD(Buffer.from('2fa-secret', 'utf8'));
+    decipher.setAuthTag(tag);
+    
+    let decrypted = decipher.update(encryptedData.encrypted, 'hex', 'utf8');
+    decrypted += decipher.final('utf8');
+    
+    return decrypted;
+  } catch (error) {
+    throw new Error('Failed to decrypt 2FA secret');
+  }
 };
 
 // Generate 2FA Secret
@@ -162,6 +222,89 @@ const verifyBackupCode = async (inputCode, hashedCodes) => {
   return -1; // No match found
 };
 
+// Send 2FA status change email notification
+const send2FANotificationEmail = async (userEmail, userName, action, ipAddress) => {
+  try {
+    const emailService = require('../services/emailService');
+    const subject = `${TWO_FA_CONFIG.serviceName} - Two-Factor Authentication ${action === 'enabled' ? 'Enabled' : 'Disabled'}`;
+    
+    const emailTemplate = `
+      <h2>Two-Factor Authentication ${action === 'enabled' ? 'Enabled' : 'Disabled'}</h2>
+      <p>Hello ${userName},</p>
+      <p>Two-factor authentication has been <strong>${action}</strong> on your ${TWO_FA_CONFIG.serviceName} account.</p>
+      <p><strong>Details:</strong></p>
+      <ul>
+        <li>Time: ${new Date().toLocaleString()}</li>
+        <li>IP Address: ${ipAddress}</li>
+        <li>Action: 2FA ${action}</li>
+      </ul>
+      <p>If you did not make this change, please contact our support team immediately.</p>
+      <p>Best regards,<br>The ${TWO_FA_CONFIG.serviceName} Team</p>
+    `;
+
+    await emailService.sendEmail({
+      to: userEmail,
+      subject,
+      html: emailTemplate
+    });
+  } catch (error) {
+    console.error('Failed to send 2FA notification email:', error);
+    // Don't throw error to prevent blocking the main 2FA operation
+  }
+};
+
+// Setup 2FA for user
+const setup2FAForUser = async (userId, userEmail, userName, ipAddress) => {
+  try {
+    const secret = generate2FASecret(userEmail);
+    const qrCode = await generate2FAQRCode(secret);
+    const backupCodes = generateBackupCodes();
+    const hashedBackupCodes = await hashBackupCodes(backupCodes);
+    
+    // Encrypt the secret before storing
+    const encryptedSecret = encrypt2FASecret(secret.base32);
+    
+    return {
+      secret: encryptedSecret,
+      qrCode,
+      backupCodes,
+      hashedBackupCodes,
+      manualEntryKey: secret.base32
+    };
+  } catch (error) {
+    throw new Error('Failed to setup 2FA: ' + error.message);
+  }
+};
+
+// Enable 2FA for user
+const enable2FAForUser = async (userId, userEmail, userName, ipAddress) => {
+  try {
+    // Send notification email
+    await send2FANotificationEmail(userEmail, userName, 'enabled', ipAddress);
+    return { success: true, message: '2FA has been enabled successfully' };
+  } catch (error) {
+    throw new Error('Failed to enable 2FA: ' + error.message);
+  }
+};
+
+// Disable 2FA for user
+const disable2FAForUser = async (userId, userEmail, userName, token, ipAddress) => {
+  try {
+    // Validate the 2FA token or backup code before disabling
+    const validation = validate2FAToken(token);
+    if (!validation.isValid) {
+      throw new Error(validation.error);
+    }
+
+    // Send notification email
+    await send2FANotificationEmail(userEmail, userName, 'disabled', ipAddress);
+    
+    return { success: true, message: '2FA has been disabled successfully' };
+  } catch (error) {
+    throw new Error('Failed to disable 2FA: ' + error.message);
+  }
+};
+
 // Middleware to authenticate JWT token
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
@@ -185,6 +328,44 @@ const authenticateToken = (req, res, next) => {
     });
   }
 };
+
+// Rate limiting middleware for 2FA attempts
+const twoFactorRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // 5 attempts per window per IP
+  message: {
+    success: false,
+    message: 'Too many 2FA verification attempts. Please try again later.',
+    retryAfter: '15 minutes'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    // Use both IP and user ID if available for more granular rate limiting
+    return req.user ? `2fa_${req.ip}_${req.user.id}` : `2fa_${req.ip}`;
+  },
+  handler: (req, res) => {
+    res.status(429).json({
+      success: false,
+      message: 'Too many 2FA verification attempts. Please try again later.',
+      retryAfter: Math.ceil(req.rateLimit.resetTime / 1000)
+    });
+  }
+});
+
+// Rate limiting middleware for 2FA setup attempts
+const twoFactorSetupRateLimit = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 3, // 3 setup attempts per hour
+  message: {
+    success: false,
+    message: 'Too many 2FA setup attempts. Please try again later.',
+    retryAfter: '1 hour'
+  },
+  keyGenerator: (req) => {
+    return req.user ? `2fa_setup_${req.user.id}` : `2fa_setup_${req.ip}`;
+  }
+});
 
 // Middleware to check 2FA requirement
 const require2FA = (req, res, next) => {
@@ -344,6 +525,16 @@ const RATE_LIMIT_CONFIG = {
     windowMs: 15 * 60 * 1000, // 15 minutes
     max: 5, // 5 2FA attempts per window
     message: 'Too many 2FA verification attempts, please try again later'
+  },
+  twoFactorSetup: {
+    windowMs: 60 * 60 * 1000, // 1 hour
+    max: 3, // 3 2FA setup attempts per hour
+    message: 'Too many 2FA setup attempts, please try again later'
+  },
+  twoFactorDisable: {
+    windowMs: 60 * 60 * 1000, // 1 hour
+    max: 2, // 2 2FA disable attempts per hour
+    message: 'Too many 2FA disable attempts, please try again later'
   }
 };
 
@@ -353,18 +544,27 @@ module.exports = {
   USER_ROLES,
   ROLE_PERMISSIONS,
   RATE_LIMIT_CONFIG,
+  ENCRYPTION_CONFIG,
   generateToken,
   generateRefreshToken,
   verifyToken,
   hashPassword,
   comparePassword,
+  encrypt2FASecret,
+  decrypt2FASecret,
   generate2FASecret,
   generate2FAQRCode,
   verify2FAToken,
   generateBackupCodes,
   hashBackupCodes,
   verifyBackupCode,
+  setup2FAForUser,
+  enable2FAForUser,
+  disable2FAForUser,
+  send2FANotificationEmail,
   authenticateToken,
+  twoFactorRateLimit,
+  twoFactorSetupRateLimit,
   require2FA,
   authorizeRoles,
   requirePermission,

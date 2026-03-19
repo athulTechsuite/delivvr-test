@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -17,6 +17,7 @@ const LoginForm = () => {
   const navigate = useNavigate();
   const { login } = useAuth();
   const { theme } = useTheme();
+  const submitRequestRef = useRef(null);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -67,12 +68,20 @@ const LoginForm = () => {
       return;
     }
 
+    // Prevent race conditions by checking if already submitting
+    if (isLoading || submitRequestRef.current) {
+      return;
+    }
+
     setIsLoading(true);
     setErrors({});
 
     try {
       if (!requiresTwoFactor) {
         // First step: email and password
+        const abortController = new AbortController();
+        submitRequestRef.current = abortController;
+
         const response = await fetch('/api/auth/login', {
           method: 'POST',
           headers: {
@@ -82,6 +91,7 @@ const LoginForm = () => {
             email: formData.email,
             password: formData.password
           }),
+          signal: abortController.signal,
         });
 
         const data = await response.json();
@@ -100,6 +110,16 @@ const LoginForm = () => {
         }
       } else {
         // Second step: 2FA verification
+        // Validate tempToken exists before making request
+        if (!tempToken) {
+          setErrors({ general: 'Authentication session expired. Please log in again.' });
+          handleBackToLogin();
+          return;
+        }
+
+        const abortController = new AbortController();
+        submitRequestRef.current = abortController;
+
         const response = await fetch('/api/auth/verify-2fa', {
           method: 'POST',
           headers: {
@@ -109,6 +129,7 @@ const LoginForm = () => {
           body: JSON.stringify({
             twoFactorCode: formData.twoFactorCode
           }),
+          signal: abortController.signal,
         });
 
         const data = await response.json();
@@ -122,10 +143,14 @@ const LoginForm = () => {
         }
       }
     } catch (error) {
-      console.error('Login error:', error);
-      setErrors({ general: 'Network error. Please check your connection and try again.' });
+      // Don't show error if request was aborted (race condition prevention)
+      if (error.name !== 'AbortError') {
+        console.error('Login error:', error);
+        setErrors({ general: 'Network error. Please check your connection and try again.' });
+      }
     } finally {
       setIsLoading(false);
+      submitRequestRef.current = null;
     }
   };
 
@@ -143,6 +168,12 @@ const LoginForm = () => {
   };
 
   const handleBackToLogin = () => {
+    // Cancel any ongoing request
+    if (submitRequestRef.current) {
+      submitRequestRef.current.abort();
+      submitRequestRef.current = null;
+    }
+    
     setRequiresTwoFactor(false);
     setTempToken('');
     setFormData(prev => ({
@@ -150,6 +181,7 @@ const LoginForm = () => {
       twoFactorCode: ''
     }));
     setErrors({});
+    setIsLoading(false);
   };
 
   const getRoleBasedRedirect = (role) => {
@@ -322,16 +354,6 @@ const LoginForm = () => {
               </div>
             </div>
           </>
-        )}
-
-        {requiresTwoFactor && (
-          <div className="two-factor-footer">
-            <p className="backup-codes-link">
-              <Link to="/backup-codes">
-                Can't access your authenticator? Use backup codes
-              </Link>
-            </p>
-          </div>
         )}
       </div>
     </div>
