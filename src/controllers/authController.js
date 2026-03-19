@@ -1,6 +1,10 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const speakeasy = require('speakeasy');
+const qrcode = require('qrcode');
+const crypto = require('crypto');
 const User = require('../models/User');
+const emailService = require('../services/emailService');
 
 // Generate JWT Token
 const generateToken = (userId, role) => {
@@ -9,6 +13,15 @@ const generateToken = (userId, role) => {
     process.env.JWT_SECRET,
     { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
   );
+};
+
+// Generate 2FA backup codes
+const generateBackupCodes = () => {
+  const codes = [];
+  for (let i = 0; i < 8; i++) {
+    codes.push(crypto.randomBytes(4).toString('hex').toUpperCase());
+  }
+  return codes;
 };
 
 // Register new user
@@ -67,7 +80,8 @@ exports.register = async (req, res) => {
       email: user.email,
       role: user.role,
       isActive: user.isActive,
-      createdAt: user.createdAt
+      createdAt: user.createdAt,
+      twoFactorEnabled: user.twoFactorEnabled || false
     };
 
     res.status(201).json({
@@ -91,7 +105,7 @@ exports.register = async (req, res) => {
 // Login user
 exports.login = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, twoFactorCode } = req.body;
 
     // Validate required fields
     if (!email || !password) {
@@ -102,7 +116,7 @@ exports.login = async (req, res) => {
     }
 
     // Find user by email
-    const user = await User.findOne({ email: email.toLowerCase() }).select('+password');
+    const user = await User.findOne({ email: email.toLowerCase() }).select('+password +twoFactorSecret +backupCodes');
     if (!user) {
       return res.status(401).json({
         success: false,
@@ -127,6 +141,44 @@ exports.login = async (req, res) => {
       });
     }
 
+    // Check if 2FA is enabled
+    if (user.twoFactorEnabled) {
+      if (!twoFactorCode) {
+        return res.status(200).json({
+          success: true,
+          requiresTwoFactor: true,
+          message: 'Please provide your 2FA code'
+        });
+      }
+
+      // Verify 2FA code
+      const verified = speakeasy.totp.verify({
+        secret: user.twoFactorSecret,
+        encoding: 'base32',
+        token: twoFactorCode,
+        window: 1
+      });
+
+      // If TOTP fails, check backup codes
+      let usedBackupCode = false;
+      if (!verified && user.backupCodes && user.backupCodes.length > 0) {
+        const codeIndex = user.backupCodes.indexOf(twoFactorCode.toUpperCase());
+        if (codeIndex !== -1) {
+          // Remove used backup code
+          user.backupCodes.splice(codeIndex, 1);
+          await user.save();
+          usedBackupCode = true;
+        }
+      }
+
+      if (!verified && !usedBackupCode) {
+        return res.status(401).json({
+          success: false,
+          message: 'Invalid 2FA code'
+        });
+      }
+    }
+
     // Update last login
     user.lastLogin = new Date();
     await user.save();
@@ -134,14 +186,15 @@ exports.login = async (req, res) => {
     // Generate token
     const token = generateToken(user._id, user.role);
 
-    // Remove password from response
+    // Remove sensitive data from response
     const userResponse = {
       id: user._id,
       name: user.name,
       email: user.email,
       role: user.role,
       isActive: user.isActive,
-      lastLogin: user.lastLogin
+      lastLogin: user.lastLogin,
+      twoFactorEnabled: user.twoFactorEnabled || false
     };
 
     res.json({
@@ -158,6 +211,297 @@ exports.login = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Internal server error during login'
+    });
+  }
+};
+
+// Setup 2FA - Generate QR code
+exports.setup2FA = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const user = await User.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    if (user.twoFactorEnabled) {
+      return res.status(400).json({
+        success: false,
+        message: '2FA is already enabled for this account'
+      });
+    }
+
+    // Generate secret
+    const secret = speakeasy.generateSecret({
+      name: `${user.email} (Delivvr)`,
+      issuer: 'Delivvr',
+      length: 32
+    });
+
+    // Generate QR code
+    const qrCodeUrl = await qrcode.toDataURL(secret.otpauth_url);
+
+    // Store temporary secret (not yet enabled)
+    user.twoFactorTempSecret = secret.base32;
+    await user.save();
+
+    res.json({
+      success: true,
+      data: {
+        secret: secret.base32,
+        qrCode: qrCodeUrl,
+        manualEntryKey: secret.base32
+      }
+    });
+
+  } catch (error) {
+    console.error('2FA setup error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error during 2FA setup'
+    });
+  }
+};
+
+// Verify and enable 2FA
+exports.verify2FA = async (req, res) => {
+  try {
+    const { token } = req.body;
+    const userId = req.user.userId;
+
+    if (!token) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide 2FA token'
+      });
+    }
+
+    const user = await User.findById(userId);
+    if (!user || !user.twoFactorTempSecret) {
+      return res.status(400).json({
+        success: false,
+        message: 'No 2FA setup in progress'
+      });
+    }
+
+    // Verify token
+    const verified = speakeasy.totp.verify({
+      secret: user.twoFactorTempSecret,
+      encoding: 'base32',
+      token: token,
+      window: 1
+    });
+
+    if (!verified) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid 2FA token'
+      });
+    }
+
+    // Generate backup codes
+    const backupCodes = generateBackupCodes();
+
+    // Enable 2FA
+    user.twoFactorEnabled = true;
+    user.twoFactorSecret = user.twoFactorTempSecret;
+    user.backupCodes = backupCodes;
+    user.twoFactorTempSecret = undefined;
+    await user.save();
+
+    // Send email notification
+    try {
+      await emailService.send2FANotification(user.email, user.name, 'enabled');
+    } catch (emailError) {
+      console.error('Failed to send 2FA notification email:', emailError);
+    }
+
+    res.json({
+      success: true,
+      message: '2FA enabled successfully',
+      data: {
+        backupCodes: backupCodes
+      }
+    });
+
+  } catch (error) {
+    console.error('2FA verification error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error during 2FA verification'
+    });
+  }
+};
+
+// Disable 2FA
+exports.disable2FA = async (req, res) => {
+  try {
+    const { password, twoFactorCode } = req.body;
+    const userId = req.user.userId;
+
+    if (!password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide your password'
+      });
+    }
+
+    const user = await User.findById(userId).select('+password +twoFactorSecret +backupCodes');
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    if (!user.twoFactorEnabled) {
+      return res.status(400).json({
+        success: false,
+        message: '2FA is not enabled for this account'
+      });
+    }
+
+    // Verify password
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid password'
+      });
+    }
+
+    // Verify 2FA code if provided
+    if (twoFactorCode) {
+      const verified = speakeasy.totp.verify({
+        secret: user.twoFactorSecret,
+        encoding: 'base32',
+        token: twoFactorCode,
+        window: 1
+      });
+
+      // Check backup codes if TOTP fails
+      let usedBackupCode = false;
+      if (!verified && user.backupCodes && user.backupCodes.length > 0) {
+        usedBackupCode = user.backupCodes.includes(twoFactorCode.toUpperCase());
+      }
+
+      if (!verified && !usedBackupCode) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid 2FA code'
+        });
+      }
+    }
+
+    // Disable 2FA
+    user.twoFactorEnabled = false;
+    user.twoFactorSecret = undefined;
+    user.backupCodes = undefined;
+    user.twoFactorTempSecret = undefined;
+    await user.save();
+
+    // Send email notification
+    try {
+      await emailService.send2FANotification(user.email, user.name, 'disabled');
+    } catch (emailError) {
+      console.error('Failed to send 2FA notification email:', emailError);
+    }
+
+    res.json({
+      success: true,
+      message: '2FA disabled successfully'
+    });
+
+  } catch (error) {
+    console.error('2FA disable error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error during 2FA disable'
+    });
+  }
+};
+
+// Generate new backup codes
+exports.generateBackupCodes = async (req, res) => {
+  try {
+    const { password, twoFactorCode } = req.body;
+    const userId = req.user.userId;
+
+    if (!password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide your password'
+      });
+    }
+
+    const user = await User.findById(userId).select('+password +twoFactorSecret');
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    if (!user.twoFactorEnabled) {
+      return res.status(400).json({
+        success: false,
+        message: '2FA is not enabled for this account'
+      });
+    }
+
+    // Verify password
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid password'
+      });
+    }
+
+    // Verify 2FA code
+    if (!twoFactorCode) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide your 2FA code'
+      });
+    }
+
+    const verified = speakeasy.totp.verify({
+      secret: user.twoFactorSecret,
+      encoding: 'base32',
+      token: twoFactorCode,
+      window: 1
+    });
+
+    if (!verified) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid 2FA code'
+      });
+    }
+
+    // Generate new backup codes
+    const backupCodes = generateBackupCodes();
+    user.backupCodes = backupCodes;
+    await user.save();
+
+    res.json({
+      success: true,
+      message: 'New backup codes generated successfully',
+      data: {
+        backupCodes: backupCodes
+      }
+    });
+
+  } catch (error) {
+    console.error('Generate backup codes error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error during backup codes generation'
     });
   }
 };
@@ -180,7 +524,9 @@ exports.getProfile = async (req, res) => {
       role: user.role,
       isActive: user.isActive,
       createdAt: user.createdAt,
-      lastLogin: user.lastLogin
+      lastLogin: user.lastLogin,
+      twoFactorEnabled: user.twoFactorEnabled || false,
+      backupCodesCount: user.backupCodes ? user.backupCodes.length : 0
     };
 
     res.json({
@@ -224,7 +570,8 @@ exports.updateProfile = async (req, res) => {
       name: user.name,
       email: user.email,
       role: user.role,
-      isActive: user.isActive
+      isActive: user.isActive,
+      twoFactorEnabled: user.twoFactorEnabled || false
     };
 
     res.json({

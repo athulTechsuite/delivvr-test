@@ -1,9 +1,49 @@
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const speakeasy = require('speakeasy');
+const qrcode = require('qrcode');
+const crypto = require('crypto');
+const rateLimit = require('express-rate-limit');
+
+// Mutex for backup code operations
+const backupCodeMutexes = new Map();
+
+// Create a simple mutex implementation
+class Mutex {
+  constructor() {
+    this.locked = false;
+    this.waiting = [];
+  }
+
+  async acquire() {
+    return new Promise((resolve) => {
+      if (!this.locked) {
+        this.locked = true;
+        resolve();
+      } else {
+        this.waiting.push(resolve);
+      }
+    });
+  }
+
+  release() {
+    if (this.waiting.length > 0) {
+      const next = this.waiting.shift();
+      next();
+    } else {
+      this.locked = false;
+    }
+  }
+}
 
 // Validate JWT secret is properly configured
 if (!process.env.JWT_SECRET) {
   throw new Error('JWT_SECRET environment variable is required and must be set');
+}
+
+// Validate encryption key for 2FA secrets
+if (!process.env.ENCRYPTION_KEY) {
+  throw new Error('ENCRYPTION_KEY environment variable is required for 2FA secret encryption');
 }
 
 // JWT Configuration
@@ -11,6 +51,39 @@ const JWT_CONFIG = {
   secret: process.env.JWT_SECRET,
   expiresIn: process.env.JWT_EXPIRES_IN || '24h',
   refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '30d'
+};
+
+// Backup code configuration constants with validation
+const BACKUP_CODE_CONFIG = {
+  length: parseInt(process.env.BACKUP_CODE_LENGTH) || 8,
+  count: parseInt(process.env.BACKUP_CODE_COUNT) || 10
+};
+
+// Validate backup code configuration
+if (BACKUP_CODE_CONFIG.length < 6 || BACKUP_CODE_CONFIG.length > 16) {
+  throw new Error('BACKUP_CODE_LENGTH must be between 6 and 16 characters');
+}
+
+if (BACKUP_CODE_CONFIG.count < 5 || BACKUP_CODE_CONFIG.count > 20) {
+  throw new Error('BACKUP_CODE_COUNT must be between 5 and 20 codes');
+}
+
+// 2FA Configuration
+const TWO_FA_CONFIG = {
+  serviceName: process.env.APP_NAME || 'Delivvr',
+  window: 1, // Allow 1 window before and after current window (30 seconds each)
+  step: 30, // 30 second time step
+  encoding: 'base32',
+  backupCodeLength: BACKUP_CODE_CONFIG.length,
+  backupCodeCount: BACKUP_CODE_CONFIG.count
+};
+
+// Encryption configuration for 2FA secrets
+const ENCRYPTION_CONFIG = {
+  algorithm: 'aes-256-gcm',
+  keyLength: 32,
+  ivLength: 16,
+  tagLength: 16
 };
 
 // User Roles
@@ -29,7 +102,8 @@ const ROLE_PERMISSIONS = {
     'place_order',
     'view_own_orders',
     'manage_wishlist',
-    'update_profile'
+    'update_profile',
+    'manage_2fa'
   ],
   [USER_ROLES.VENDOR]: [
     'view_products',
@@ -37,7 +111,8 @@ const ROLE_PERMISSIONS = {
     'view_own_orders',
     'manage_inventory',
     'view_sales_analytics',
-    'update_profile'
+    'update_profile',
+    'manage_2fa'
   ],
   [USER_ROLES.ADMIN]: [
     'view_products',
@@ -47,13 +122,15 @@ const ROLE_PERMISSIONS = {
     'manage_categories',
     'view_analytics',
     'manage_vendors',
-    'update_profile'
+    'update_profile',
+    'manage_2fa'
   ],
   [USER_ROLES.SUPER_ADMIN]: [
     'manage_everything',
     'manage_admins',
     'system_settings',
-    'view_system_logs'
+    'view_system_logs',
+    'manage_2fa'
   ]
 };
 
@@ -91,6 +168,287 @@ const comparePassword = async (password, hashedPassword) => {
   return await bcrypt.compare(password, hashedPassword);
 };
 
+// Encrypt 2FA Secret
+const encrypt2FASecret = (secret) => {
+  try {
+    const key = Buffer.from(process.env.ENCRYPTION_KEY, 'hex');
+    const iv = crypto.randomBytes(ENCRYPTION_CONFIG.ivLength);
+    const cipher = crypto.createCipher(ENCRYPTION_CONFIG.algorithm, key);
+    cipher.setAAD(Buffer.from('2fa-secret', 'utf8'));
+    
+    let encrypted = cipher.update(secret, 'utf8', 'hex');
+    encrypted += cipher.final('hex');
+    const tag = cipher.getAuthTag();
+    
+    return {
+      encrypted,
+      iv: iv.toString('hex'),
+      tag: tag.toString('hex')
+    };
+  } catch (error) {
+    throw new Error('Failed to encrypt 2FA secret');
+  }
+};
+
+// Decrypt 2FA Secret
+const decrypt2FASecret = (encryptedData) => {
+  try {
+    const key = Buffer.from(process.env.ENCRYPTION_KEY, 'hex');
+    const iv = Buffer.from(encryptedData.iv, 'hex');
+    const tag = Buffer.from(encryptedData.tag, 'hex');
+    
+    const decipher = crypto.createDecipher(ENCRYPTION_CONFIG.algorithm, key);
+    decipher.setAAD(Buffer.from('2fa-secret', 'utf8'));
+    decipher.setAuthTag(tag);
+    
+    let decrypted = decipher.update(encryptedData.encrypted, 'hex', 'utf8');
+    decrypted += decipher.final('utf8');
+    
+    return decrypted;
+  } catch (error) {
+    throw new Error('Failed to decrypt 2FA secret');
+  }
+};
+
+// Generate 2FA Secret
+const generate2FASecret = (userEmail) => {
+  return speakeasy.generateSecret({
+    name: `${TWO_FA_CONFIG.serviceName} (${userEmail})`,
+    service: TWO_FA_CONFIG.serviceName,
+    length: 32,
+    encoding: TWO_FA_CONFIG.encoding
+  });
+};
+
+// Generate QR Code for 2FA Setup
+const generate2FAQRCode = async (secret) => {
+  try {
+    return await qrcode.toDataURL(secret.otpauth_url);
+  } catch (error) {
+    throw new Error('Failed to generate QR code');
+  }
+};
+
+// Sanitize 2FA token input
+const sanitize2FAToken = (token) => {
+  if (!token || typeof token !== 'string') {
+    return null;
+  }
+  
+  // Only allow digits and remove any whitespace
+  const sanitized = token.replace(/\s/g, '').replace(/[^0-9]/g, '');
+  
+  // Validate format - must be exactly 6 digits
+  if (!/^[0-9]{6}$/.test(sanitized)) {
+    return null;
+  }
+  
+  return sanitized;
+};
+
+// Verify 2FA Token with input sanitization
+const verify2FAToken = (token, secret) => {
+  const sanitizedToken = sanitize2FAToken(token);
+  
+  if (!sanitizedToken) {
+    return false;
+  }
+  
+  return speakeasy.totp.verify({
+    secret: secret,
+    encoding: TWO_FA_CONFIG.encoding,
+    token: sanitizedToken,
+    step: TWO_FA_CONFIG.step,
+    window: TWO_FA_CONFIG.window
+  });
+};
+
+// Secure memory clearing function
+const secureMemoryClear = (obj) => {
+  if (Array.isArray(obj)) {
+    for (let i = 0; i < obj.length; i++) {
+      if (typeof obj[i] === 'string') {
+        obj[i] = '0'.repeat(obj[i].length);
+      }
+      obj[i] = null;
+    }
+    obj.length = 0;
+  } else if (typeof obj === 'string') {
+    return '0'.repeat(obj.length);
+  }
+};
+
+// Generate Backup Codes with immediate hashing
+const generateBackupCodes = async () => {
+  const codes = [];
+  const hashedCodes = [];
+  
+  try {
+    // Generate codes
+    for (let i = 0; i < TWO_FA_CONFIG.backupCodeCount; i++) {
+      const code = crypto.randomBytes(TWO_FA_CONFIG.backupCodeLength).toString('hex').toUpperCase();
+      codes.push(code);
+      // Immediately hash each code
+      const hashedCode = await bcrypt.hash(code, 10);
+      hashedCodes.push(hashedCode);
+    }
+    
+    // Return both plain codes (for user display) and hashed codes (for storage)
+    // Plain codes should be cleared from memory after being displayed to user
+    return { codes, hashedCodes };
+  } catch (error) {
+    // Clear any codes that might be in memory
+    secureMemoryClear(codes);
+    throw new Error('Failed to generate backup codes');
+  }
+};
+
+// Hash Backup Codes
+const hashBackupCodes = async (codes) => {
+  const hashedCodes = [];
+  for (const code of codes) {
+    hashedCodes.push(await bcrypt.hash(code, 10));
+  }
+  return hashedCodes;
+};
+
+// Verify Backup Code with concurrency protection
+const verifyBackupCode = async (inputCode, hashedCodes, userId) => {
+  // Get or create mutex for this user
+  if (!backupCodeMutexes.has(userId)) {
+    backupCodeMutexes.set(userId, new Mutex());
+  }
+  
+  const mutex = backupCodeMutexes.get(userId);
+  
+  await mutex.acquire();
+  
+  try {
+    for (let i = 0; i < hashedCodes.length; i++) {
+      if (hashedCodes[i] && await bcrypt.compare(inputCode, hashedCodes[i])) {
+        return i; // Return index of used backup code
+      }
+    }
+    return -1; // No match found
+  } finally {
+    mutex.release();
+  }
+};
+
+// Send 2FA status change email notification with proper error logging
+const send2FANotificationEmail = async (userEmail, userName, action, ipAddress) => {
+  try {
+    const emailService = require('../services/emailService');
+    const subject = `${TWO_FA_CONFIG.serviceName} - Two-Factor Authentication ${action === 'enabled' ? 'Enabled' : 'Disabled'}`;
+    
+    const emailTemplate = `
+      <h2>Two-Factor Authentication ${action === 'enabled' ? 'Enabled' : 'Disabled'}</h2>
+      <p>Hello ${userName},</p>
+      <p>Two-factor authentication has been <strong>${action}</strong> on your ${TWO_FA_CONFIG.serviceName} account.</p>
+      <p><strong>Details:</strong></p>
+      <ul>
+        <li>Time: ${new Date().toLocaleString()}</li>
+        <li>IP Address: ${ipAddress}</li>
+        <li>Action: 2FA ${action}</li>
+      </ul>
+      <p>If you did not make this change, please contact our support team immediately.</p>
+      <p>Best regards,<br>The ${TWO_FA_CONFIG.serviceName} Team</p>
+    `;
+
+    await emailService.sendEmail({
+      to: userEmail,
+      subject,
+      html: emailTemplate
+    });
+
+    // Log successful email send for monitoring
+    console.log(`2FA notification email sent successfully to ${userEmail} for action: ${action}`);
+  } catch (error) {
+    // Enhanced error logging for monitoring and debugging
+    const errorContext = {
+      userEmail,
+      userName,
+      action,
+      ipAddress,
+      timestamp: new Date().toISOString(),
+      error: error.message,
+      stack: error.stack
+    };
+
+    console.error('Failed to send 2FA notification email:', errorContext);
+    
+    // Log to monitoring service if available
+    try {
+      const monitoringService = require('../services/monitoringService');
+      await monitoringService.logError('2fa_email_failure', errorContext);
+    } catch (monitoringError) {
+      console.error('Failed to log to monitoring service:', monitoringError.message);
+    }
+    
+    // Don't throw error to prevent blocking the main 2FA operation
+    // The caller should check if email notification is critical for their use case
+  }
+};
+
+// Setup 2FA for user
+const setup2FAForUser = async (userId, userEmail, userName, ipAddress) => {
+  try {
+    const secret = generate2FASecret(userEmail);
+    const qrCode = await generate2FAQRCode(secret);
+    const backupCodeResult = await generateBackupCodes();
+    
+    // Encrypt the secret before storing
+    const encryptedSecret = encrypt2FASecret(secret.base32);
+    
+    const result = {
+      secret: encryptedSecret,
+      qrCode,
+      backupCodes: backupCodeResult.codes,
+      hashedBackupCodes: backupCodeResult.hashedCodes,
+      manualEntryKey: secret.base32
+    };
+    
+    // Clear the plain text codes from memory after a short delay
+    // In production, these should be cleared immediately after being sent to client
+    setTimeout(() => {
+      secureMemoryClear(backupCodeResult.codes);
+    }, 1000);
+    
+    return result;
+  } catch (error) {
+    throw new Error('Failed to setup 2FA: ' + error.message);
+  }
+};
+
+// Enable 2FA for user
+const enable2FAForUser = async (userId, userEmail, userName, ipAddress) => {
+  try {
+    // Send notification email
+    await send2FANotificationEmail(userEmail, userName, 'enabled', ipAddress);
+    return { success: true, message: '2FA has been enabled successfully' };
+  } catch (error) {
+    throw new Error('Failed to enable 2FA: ' + error.message);
+  }
+};
+
+// Disable 2FA for user
+const disable2FAForUser = async (userId, userEmail, userName, token, ipAddress) => {
+  try {
+    // Validate the 2FA token or backup code before disabling
+    const validation = validate2FAToken(token);
+    if (!validation.isValid) {
+      throw new Error(validation.error);
+    }
+
+    // Send notification email
+    await send2FANotificationEmail(userEmail, userName, 'disabled', ipAddress);
+    
+    return { success: true, message: '2FA has been disabled successfully' };
+  } catch (error) {
+    throw new Error('Failed to disable 2FA: ' + error.message);
+  }
+};
+
 // Middleware to authenticate JWT token
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
@@ -111,6 +469,95 @@ const authenticateToken = (req, res, next) => {
     return res.status(403).json({ 
       success: false, 
       message: 'Invalid or expired token' 
+    });
+  }
+};
+
+// Rate limiting middleware for 2FA attempts
+const twoFactorRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // 5 attempts per window per IP
+  message: {
+    success: false,
+    message: 'Too many 2FA verification attempts. Please try again later.',
+    retryAfter: '15 minutes'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    // Use both IP and user ID if available for more granular rate limiting
+    return req.user ? `2fa_${req.ip}_${req.user.id}` : `2fa_${req.ip}`;
+  },
+  handler: (req, res) => {
+    res.status(429).json({
+      success: false,
+      message: 'Too many 2FA verification attempts. Please try again later.',
+      retryAfter: Math.ceil(req.rateLimit.resetTime / 1000)
+    });
+  }
+});
+
+// Rate limiting middleware for 2FA setup attempts
+const twoFactorSetupRateLimit = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 3, // 3 setup attempts per hour
+  message: {
+    success: false,
+    message: 'Too many 2FA setup attempts. Please try again later.',
+    retryAfter: '1 hour'
+  },
+  keyGenerator: (req) => {
+    return req.user ? `2fa_setup_${req.user.id}` : `2fa_setup_${req.ip}`;
+  }
+});
+
+// Constant time delay function to prevent timing attacks
+const constantTimeDelay = () => {
+  return new Promise(resolve => {
+    // Add a consistent 100ms delay regardless of the actual operation time
+    setTimeout(resolve, 100);
+  });
+};
+
+// Middleware to check 2FA requirement with constant-time response
+const require2FA = async (req, res, next) => {
+  const startTime = Date.now();
+  
+  try {
+    if (!req.user) {
+      await constantTimeDelay();
+      return res.status(401).json({ 
+        success: false, 
+        message: 'Authentication required' 
+      });
+    }
+
+    const has2FA = req.user.twoFactorEnabled;
+    const is2FAVerified = req.user.twoFactorVerified;
+    
+    // Always perform the same checks regardless of 2FA status
+    const requires2FA = has2FA && !is2FAVerified;
+    
+    // Ensure constant response time
+    const elapsedTime = Date.now() - startTime;
+    if (elapsedTime < 50) {
+      await new Promise(resolve => setTimeout(resolve, 50 - elapsedTime));
+    }
+    
+    if (requires2FA) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Two-factor authentication required',
+        requiresTwoFactor: true
+      });
+    }
+
+    next();
+  } catch (error) {
+    await constantTimeDelay();
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error'
     });
   }
 };
@@ -207,13 +654,31 @@ const validatePassword = (password) => {
   };
 };
 
+// Validate 2FA Token Format
+const validate2FAToken = (token) => {
+  if (!token) {
+    return { isValid: false, error: '2FA code is required' };
+  }
+
+  if (typeof token !== 'string') {
+    return { isValid: false, error: '2FA code must be a string' };
+  }
+
+  // Remove spaces and check if it's 6 digits
+  const cleanToken = token.replace(/\s/g, '');
+  if (!/^\d{6}$/.test(cleanToken)) {
+    return { isValid: false, error: '2FA code must be exactly 6 digits' };
+  }
+
+  return { isValid: true, cleanToken };
+};
+
 // Generate secure random string for tokens
 const generateSecureToken = (length = 32) => {
-  const crypto = require('crypto');
   return crypto.randomBytes(length).toString('hex');
 };
 
-// Rate limiting configuration
+// Rate limiting configuration with comprehensive 2FA categories
 const RATE_LIMIT_CONFIG = {
   login: {
     windowMs: 15 * 60 * 1000, // 15 minutes
@@ -229,23 +694,69 @@ const RATE_LIMIT_CONFIG = {
     windowMs: 60 * 60 * 1000, // 1 hour
     max: 3, // 3 password reset attempts per hour
     message: 'Too many password reset attempts, please try again later'
+  },
+  twoFactor: {
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 5, // 5 2FA attempts per window
+    message: 'Too many 2FA verification attempts, please try again later'
+  },
+  twoFactorSetup: {
+    windowMs: 60 * 60 * 1000, // 1 hour
+    max: 3, // 3 2FA setup attempts per hour
+    message: 'Too many 2FA setup attempts, please try again later'
+  },
+  twoFactorDisable: {
+    windowMs: 60 * 60 * 1000, // 1 hour
+    max: 2, // 2 2FA disable attempts per hour
+    message: 'Too many 2FA disable attempts, please try again later'
+  },
+  twoFactorBackupCode: {
+    windowMs: 60 * 60 * 1000, // 1 hour
+    max: 10, // 10 backup code attempts per hour (user has limited codes)
+    message: 'Too many backup code attempts, please try again later'
+  },
+  twoFactorQRGeneration: {
+    windowMs: 60 * 60 * 1000, // 1 hour
+    max: 5, // 5 QR code generation attempts per hour
+    message: 'Too many QR code generation attempts, please try again later'
   }
 };
 
 module.exports = {
   JWT_CONFIG,
+  TWO_FA_CONFIG,
+  BACKUP_CODE_CONFIG,
   USER_ROLES,
   ROLE_PERMISSIONS,
   RATE_LIMIT_CONFIG,
+  ENCRYPTION_CONFIG,
   generateToken,
   generateRefreshToken,
   verifyToken,
   hashPassword,
   comparePassword,
+  encrypt2FASecret,
+  decrypt2FASecret,
+  generate2FASecret,
+  generate2FAQRCode,
+  verify2FAToken,
+  generateBackupCodes,
+  hashBackupCodes,
+  verifyBackupCode,
+  setup2FAForUser,
+  enable2FAForUser,
+  disable2FAForUser,
+  send2FANotificationEmail,
   authenticateToken,
+  twoFactorRateLimit,
+  twoFactorSetupRateLimit,
+  require2FA,
   authorizeRoles,
   requirePermission,
   hasPermission,
   validatePassword,
-  generateSecureToken
+  validate2FAToken,
+  generateSecureToken,
+  sanitize2FAToken,
+  secureMemoryClear
 };

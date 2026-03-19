@@ -69,6 +69,33 @@ const userSchema = new mongoose.Schema({
     default: 0
   },
   lockUntil: Date,
+  // Two-Factor Authentication fields
+  twoFactorAuth: {
+    isEnabled: {
+      type: Boolean,
+      default: false
+    },
+    secret: {
+      type: String,
+      select: false // Don't include in queries by default for security
+    },
+    backupCodes: [{
+      code: {
+        type: String,
+        select: false
+      },
+      isUsed: {
+        type: Boolean,
+        default: false
+      },
+      createdAt: {
+        type: Date,
+        default: Date.now
+      }
+    }],
+    enabledAt: Date,
+    lastUsed: Date
+  },
   // Customer specific fields
   wishlist: [{
     type: mongoose.Schema.Types.ObjectId,
@@ -117,6 +144,7 @@ const userSchema = new mongoose.Schema({
 userSchema.index({ email: 1 });
 userSchema.index({ role: 1 });
 userSchema.index({ isActive: 1 });
+userSchema.index({ 'twoFactorAuth.isEnabled': 1 });
 
 // Virtual for full name
 userSchema.virtual('fullName').get(function() {
@@ -126,6 +154,11 @@ userSchema.virtual('fullName').get(function() {
 // Virtual for account lock status
 userSchema.virtual('isLocked').get(function() {
   return !!(this.lockUntil && this.lockUntil > Date.now());
+});
+
+// Virtual for 2FA status
+userSchema.virtual('has2FA').get(function() {
+  return this.twoFactorAuth && this.twoFactorAuth.isEnabled;
 });
 
 // Pre-save middleware to hash password
@@ -141,6 +174,25 @@ userSchema.pre('save', async function(next) {
   }
 });
 
+// Pre-save middleware to hash backup codes
+userSchema.pre('save', async function(next) {
+  if (!this.isModified('twoFactorAuth.backupCodes')) return next();
+  
+  try {
+    if (this.twoFactorAuth && this.twoFactorAuth.backupCodes) {
+      for (let backupCode of this.twoFactorAuth.backupCodes) {
+        if (!backupCode.code.startsWith('$2a$')) { // Only hash if not already hashed
+          const salt = await bcrypt.genSalt(10);
+          backupCode.code = await bcrypt.hash(backupCode.code, salt);
+        }
+      }
+    }
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
+
 // Method to compare password
 userSchema.methods.comparePassword = async function(candidatePassword) {
   try {
@@ -148,6 +200,96 @@ userSchema.methods.comparePassword = async function(candidatePassword) {
   } catch (error) {
     throw new Error('Password comparison failed');
   }
+};
+
+// Method to compare backup code
+userSchema.methods.compareBackupCode = async function(candidateCode) {
+  try {
+    if (!this.twoFactorAuth || !this.twoFactorAuth.backupCodes) {
+      return null;
+    }
+
+    for (let backupCode of this.twoFactorAuth.backupCodes) {
+      if (!backupCode.isUsed) {
+        const isMatch = await bcrypt.compare(candidateCode, backupCode.code);
+        if (isMatch) {
+          return backupCode;
+        }
+      }
+    }
+    return null;
+  } catch (error) {
+    throw new Error('Backup code comparison failed');
+  }
+};
+
+// Method to enable 2FA
+userSchema.methods.enable2FA = function(secret, backupCodes = []) {
+  this.twoFactorAuth = {
+    isEnabled: true,
+    secret: secret,
+    backupCodes: backupCodes.map(code => ({ code })),
+    enabledAt: new Date()
+  };
+  return this.save();
+};
+
+// Method to disable 2FA
+userSchema.methods.disable2FA = function() {
+  this.twoFactorAuth = {
+    isEnabled: false,
+    secret: undefined,
+    backupCodes: [],
+    enabledAt: undefined,
+    lastUsed: this.twoFactorAuth?.lastUsed
+  };
+  return this.save();
+};
+
+// Method to use backup code
+userSchema.methods.useBackupCode = function(backupCodeId) {
+  if (this.twoFactorAuth && this.twoFactorAuth.backupCodes) {
+    const backupCode = this.twoFactorAuth.backupCodes.id(backupCodeId);
+    if (backupCode) {
+      backupCode.isUsed = true;
+      this.twoFactorAuth.lastUsed = new Date();
+      return this.save();
+    }
+  }
+  throw new Error('Backup code not found');
+};
+
+// Method to generate new backup codes
+userSchema.methods.generateBackupCodes = function() {
+  const crypto = require('crypto');
+  const backupCodes = [];
+  
+  for (let i = 0; i < 10; i++) {
+    // Generate 8-character alphanumeric backup codes
+    const code = crypto.randomBytes(4).toString('hex').toUpperCase();
+    backupCodes.push(code);
+  }
+  
+  if (!this.twoFactorAuth) {
+    this.twoFactorAuth = {};
+  }
+  
+  this.twoFactorAuth.backupCodes = backupCodes.map(code => ({
+    code,
+    isUsed: false,
+    createdAt: new Date()
+  }));
+  
+  return { codes: backupCodes, save: () => this.save() };
+};
+
+// Method to update 2FA last used timestamp
+userSchema.methods.update2FALastUsed = function() {
+  if (this.twoFactorAuth) {
+    this.twoFactorAuth.lastUsed = new Date();
+    return this.save();
+  }
+  return Promise.resolve(this);
 };
 
 // Method to increment login attempts
@@ -301,6 +443,18 @@ userSchema.methods.toJSON = function() {
   delete user.emailVerificationToken;
   delete user.loginAttempts;
   delete user.lockUntil;
+  
+  // Remove sensitive 2FA data from JSON output
+  if (user.twoFactorAuth) {
+    delete user.twoFactorAuth.secret;
+    delete user.twoFactorAuth.backupCodes;
+    // Only show if 2FA is enabled and when it was enabled/last used
+    user.twoFactorAuth = {
+      isEnabled: user.twoFactorAuth.isEnabled,
+      enabledAt: user.twoFactorAuth.enabledAt,
+      lastUsed: user.twoFactorAuth.lastUsed
+    };
+  }
   
   return user;
 };

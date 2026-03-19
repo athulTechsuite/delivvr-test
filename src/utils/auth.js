@@ -1,4 +1,7 @@
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
+import speakeasy from 'speakeasy';
+import QRCode from 'qrcode';
 
 // JWT Secret - In production, this should be an environment variable
 const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-key-change-in-production';
@@ -11,16 +14,39 @@ export const USER_ROLES = {
   VENDOR: 'vendor'
 };
 
+// 2FA Configuration
+export const TWO_FA_CONFIG = {
+  SERVICE_NAME: 'Delivvr',
+  BACKUP_CODES_COUNT: 10,
+  BACKUP_CODE_LENGTH: 8,
+  TOTP_WINDOW: 1, // Allow 1 step before/after for clock skew
+  QR_CODE_SIZE: 200
+};
+
 // Generate JWT token
-export const generateToken = (userId, email, role) => {
+export const generateToken = (userId, email, role, requires2FA = false) => {
   const payload = {
     userId,
     email,
     role,
+    requires2FA,
     iat: Date.now()
   };
   
   return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRY });
+};
+
+// Generate temporary 2FA token (short-lived)
+export const generate2FAToken = (userId, email, role) => {
+  const payload = {
+    userId,
+    email,
+    role,
+    temp2FA: true,
+    iat: Date.now()
+  };
+  
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: '10m' });
 };
 
 // Verify JWT token
@@ -39,6 +65,79 @@ export const decodeToken = (token) => {
   } catch (error) {
     return null;
   }
+};
+
+// Generate 2FA secret
+export const generate2FASecret = (email) => {
+  return speakeasy.generateSecret({
+    name: `${TWO_FA_CONFIG.SERVICE_NAME} (${email})`,
+    issuer: TWO_FA_CONFIG.SERVICE_NAME,
+    length: 32
+  });
+};
+
+// Generate QR code for 2FA setup
+export const generate2FAQRCode = async (secret) => {
+  try {
+    const qrCodeDataUrl = await QRCode.toDataURL(secret.otpauth_url, {
+      width: TWO_FA_CONFIG.QR_CODE_SIZE,
+      margin: 2
+    });
+    return qrCodeDataUrl;
+  } catch (error) {
+    throw new Error('Failed to generate QR code');
+  }
+};
+
+// Verify 2FA token
+export const verify2FAToken = (secret, token) => {
+  return speakeasy.totp.verify({
+    secret,
+    encoding: 'base32',
+    token,
+    window: TWO_FA_CONFIG.TOTP_WINDOW
+  });
+};
+
+// Generate backup codes
+export const generateBackupCodes = (count = TWO_FA_CONFIG.BACKUP_CODES_COUNT) => {
+  const codes = [];
+  for (let i = 0; i < count; i++) {
+    const code = crypto.randomBytes(TWO_FA_CONFIG.BACKUP_CODE_LENGTH / 2).toString('hex');
+    codes.push(code.toUpperCase());
+  }
+  return codes;
+};
+
+// Hash backup codes for secure storage
+export const hashBackupCodes = (codes) => {
+  return codes.map(code => ({
+    hash: crypto.createHash('sha256').update(code).digest('hex'),
+    used: false
+  }));
+};
+
+// Verify backup code
+export const verifyBackupCode = (code, hashedCodes) => {
+  const codeHash = crypto.createHash('sha256').update(code.toUpperCase()).digest('hex');
+  return hashedCodes.find(bc => bc.hash === codeHash && !bc.used);
+};
+
+// Mark backup code as used
+export const markBackupCodeUsed = (code, hashedCodes) => {
+  const codeHash = crypto.createHash('sha256').update(code.toUpperCase()).digest('hex');
+  const backupCode = hashedCodes.find(bc => bc.hash === codeHash);
+  if (backupCode) {
+    backupCode.used = true;
+  }
+  return hashedCodes;
+};
+
+// Format backup codes for display (add dashes)
+export const formatBackupCodes = (codes) => {
+  return codes.map(code => {
+    return code.match(/.{1,4}/g).join('-');
+  });
 };
 
 // Check if user has required role
@@ -107,7 +206,13 @@ export const getCurrentUser = () => {
 // Check if user is authenticated
 export const isAuthenticated = () => {
   const user = getCurrentUser();
-  return !!user;
+  return !!user && !user.requires2FA;
+};
+
+// Check if user needs 2FA verification
+export const requires2FAVerification = () => {
+  const user = getCurrentUser();
+  return !!user && user.requires2FA;
 };
 
 // Logout user
@@ -150,14 +255,42 @@ export const validatePassword = (password) => {
   };
 };
 
+// 2FA code validation utility
+export const validate2FACode = (code) => {
+  if (!code) {
+    return { isValid: false, error: '2FA code is required' };
+  }
+  
+  const cleanCode = code.replace(/\s/g, '');
+  if (!/^\d{6}$/.test(cleanCode)) {
+    return { isValid: false, error: '2FA code must be 6 digits' };
+  }
+  
+  return { isValid: true, code: cleanCode };
+};
+
+// Backup code validation utility
+export const validateBackupCode = (code) => {
+  if (!code) {
+    return { isValid: false, error: 'Backup code is required' };
+  }
+  
+  const cleanCode = code.replace(/[-\s]/g, '').toUpperCase();
+  if (!/^[A-F0-9]{8}$/.test(cleanCode)) {
+    return { isValid: false, error: 'Invalid backup code format' };
+  }
+  
+  return { isValid: true, code: cleanCode };
+};
+
 // Email validation utility
 export const validateEmail = (email) => {
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   return emailRegex.test(email);
 };
 
-// Auth middleware for API routes
-export const authMiddleware = (requiredRoles = null) => {
+// Enhanced auth middleware for API routes with 2FA support
+export const authMiddleware = (requiredRoles = null, skip2FA = false) => {
   return (req, res, next) => {
     try {
       const token = req.headers.authorization?.replace('Bearer ', '');
@@ -169,6 +302,14 @@ export const authMiddleware = (requiredRoles = null) => {
       const decoded = verifyToken(token);
       req.user = decoded;
       
+      // Check if 2FA is required and not skipped
+      if (!skip2FA && decoded.requires2FA) {
+        return res.status(401).json({ 
+          error: '2FA verification required',
+          requires2FA: true
+        });
+      }
+      
       // Check role permissions if required
       if (requiredRoles && !hasRole(decoded.role, requiredRoles)) {
         return res.status(403).json({ error: 'Access denied. Insufficient permissions.' });
@@ -177,6 +318,30 @@ export const authMiddleware = (requiredRoles = null) => {
       next();
     } catch (error) {
       res.status(401).json({ error: 'Invalid token.' });
+    }
+  };
+};
+
+// 2FA middleware for temporary tokens
+export const temp2FAMiddleware = () => {
+  return (req, res, next) => {
+    try {
+      const token = req.headers.authorization?.replace('Bearer ', '');
+      
+      if (!token) {
+        return res.status(401).json({ error: 'Access denied. No token provided.' });
+      }
+      
+      const decoded = verifyToken(token);
+      
+      if (!decoded.temp2FA) {
+        return res.status(401).json({ error: 'Invalid temporary token.' });
+      }
+      
+      req.user = decoded;
+      next();
+    } catch (error) {
+      res.status(401).json({ error: 'Invalid temporary token.' });
     }
   };
 };
@@ -195,7 +360,7 @@ export const getDashboardRoute = (role) => {
   }
 };
 
-// Protected route wrapper for client-side routing
+// Protected route wrapper for client-side routing with 2FA support
 export const withAuth = (WrappedComponent, allowedRoles = null) => {
   return function AuthenticatedComponent(props) {
     const user = getCurrentUser();
@@ -203,6 +368,14 @@ export const withAuth = (WrappedComponent, allowedRoles = null) => {
     if (!user) {
       if (typeof window !== 'undefined') {
         window.location.href = '/login';
+      }
+      return null;
+    }
+    
+    // Check if 2FA is required
+    if (user.requires2FA) {
+      if (typeof window !== 'undefined') {
+        window.location.href = '/2fa-verify';
       }
       return null;
     }
@@ -220,8 +393,17 @@ export const withAuth = (WrappedComponent, allowedRoles = null) => {
 
 export default {
   generateToken,
+  generate2FAToken,
   verifyToken,
   decodeToken,
+  generate2FASecret,
+  generate2FAQRCode,
+  verify2FAToken,
+  generateBackupCodes,
+  hashBackupCodes,
+  verifyBackupCode,
+  markBackupCodeUsed,
+  formatBackupCodes,
   hasRole,
   isAdmin,
   isVendor,
@@ -231,11 +413,16 @@ export default {
   removeStoredToken,
   getCurrentUser,
   isAuthenticated,
+  requires2FAVerification,
   logout,
   validatePassword,
+  validate2FACode,
+  validateBackupCode,
   validateEmail,
   authMiddleware,
+  temp2FAMiddleware,
   getDashboardRoute,
   withAuth,
-  USER_ROLES
+  USER_ROLES,
+  TWO_FA_CONFIG
 };
