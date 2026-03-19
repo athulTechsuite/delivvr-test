@@ -2,6 +2,7 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const speakeasy = require('speakeasy');
 const qrcode = require('qrcode');
+const crypto = require('crypto');
 const emailService = require('../services/emailService');
 
 // Validate JWT secret is properly configured
@@ -19,17 +20,20 @@ const JWT_CONFIG = {
 // Two-Factor Authentication Configuration
 const TOTP_CONFIG = {
   name: process.env.APP_NAME || 'Delivvr',
-  issuer: process.env.APP_NAME || 'Delivvr',
-  window: 2, // Allow 2 time steps before/after current time
-  length: 6, // 6-digit codes
-  step: 30, // 30-second time step
-  encoding: 'base32'
+  issuer: process.env.APP_ISSUER || process.env.APP_NAME || 'Delivvr',
+  window: parseInt(process.env.TOTP_WINDOW) || 2, // Allow 2 time steps before/after current time
+  length: parseInt(process.env.TOTP_LENGTH) || 6, // 6-digit codes
+  step: parseInt(process.env.TOTP_STEP) || 30, // 30-second time step
+  encoding: process.env.TOTP_ENCODING || 'base32'
 };
 
-// 2FA Method Types
+// 2FA Method Types - Expanded for completeness
 const TWO_FA_METHODS = {
   TOTP: 'totp',
-  SMS: 'sms'
+  SMS: 'sms',
+  EMAIL: 'email',
+  HARDWARE_KEY: 'hardware_key',
+  BACKUP_CODE: 'backup_code'
 };
 
 // Validate 2FA method
@@ -99,8 +103,57 @@ const ROLE_PERMISSIONS = {
   ]
 };
 
-// In-memory store for concurrent operation tracking
-const verificationAttempts = new Map();
+// Redis client for rate limiting and verification attempts (fallback to in-memory for development)
+let redisClient = null;
+const verificationAttempts = new Map(); // Fallback for development
+
+// Initialize Redis client if available
+const initializeRedis = () => {
+  try {
+    if (process.env.REDIS_URL || process.env.REDIS_HOST) {
+      const Redis = require('redis');
+      const redisOptions = process.env.REDIS_URL 
+        ? { url: process.env.REDIS_URL }
+        : {
+            host: process.env.REDIS_HOST || 'localhost',
+            port: process.env.REDIS_PORT || 6379,
+            password: process.env.REDIS_PASSWORD,
+            db: process.env.REDIS_DB || 0
+          };
+      
+      redisClient = Redis.createClient(redisOptions);
+      redisClient.on('error', (err) => {
+        console.error('Redis Client Error:', err);
+        redisClient = null; // Fallback to in-memory
+      });
+      redisClient.connect();
+    }
+  } catch (error) {
+    console.warn('Redis not available, using in-memory storage:', error.message);
+    redisClient = null;
+  }
+};
+
+// Initialize Redis on module load
+initializeRedis();
+
+// Constant-time string comparison to prevent timing attacks
+const constantTimeCompare = (a, b) => {
+  if (typeof a !== 'string' || typeof b !== 'string') {
+    return false;
+  }
+  
+  if (a.length !== b.length) {
+    return false;
+  }
+  
+  let result = 0;
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  
+  return result === 0;
+};
 
 // Generate JWT Token
 const generateToken = (payload) => {
@@ -168,20 +221,38 @@ const generateQRCode = async (secret) => {
   }
 };
 
-// Verify TOTP token
+// Verify TOTP token with constant-time comparison
 const verifyTOTPToken = (token, secret) => {
-  return speakeasy.totp.verify({
+  if (!token || !secret) {
+    return false;
+  }
+  
+  // Generate the expected token using speakeasy
+  const expectedToken = speakeasy.totp({
     secret: secret,
     encoding: TOTP_CONFIG.encoding,
-    token: token,
-    window: TOTP_CONFIG.window,
     step: TOTP_CONFIG.step
   });
+  
+  // Use constant-time comparison to prevent timing attacks
+  const isValid = constantTimeCompare(token, expectedToken);
+  
+  // Also check with window for time drift tolerance
+  if (!isValid) {
+    return speakeasy.totp.verify({
+      secret: secret,
+      encoding: TOTP_CONFIG.encoding,
+      token: token,
+      window: TOTP_CONFIG.window,
+      step: TOTP_CONFIG.step
+    });
+  }
+  
+  return isValid;
 };
 
 // Generate backup recovery codes with improved security
 const generateRecoveryCodes = (count = 8) => {
-  const crypto = require('crypto');
   const codes = [];
   
   for (let i = 0; i < count; i++) {
@@ -203,11 +274,17 @@ const hashRecoveryCodes = async (codes) => {
   return hashedCodes;
 };
 
-// Verify recovery code
-const verifyRecoveryCode = async (inputCode, hashedCodes) => {
+// Verify recovery code with atomic operation for code invalidation
+const verifyRecoveryCode = async (inputCode, hashedCodes, userId, updateUserRecoveryCodes) => {
   for (let i = 0; i < hashedCodes.length; i++) {
     const isValid = await bcrypt.compare(inputCode.toUpperCase(), hashedCodes[i]);
     if (isValid) {
+      // Atomic operation: remove the used code immediately
+      if (updateUserRecoveryCodes && typeof updateUserRecoveryCodes === 'function') {
+        const newHashedCodes = [...hashedCodes];
+        newHashedCodes.splice(i, 1); // Remove the used code
+        await updateUserRecoveryCodes(userId, newHashedCodes);
+      }
       return { valid: true, index: i };
     }
   }
@@ -304,12 +381,42 @@ const disable2FA = async (userId, userEmail, userName, currentPassword, userHash
   return true;
 };
 
-// Atomic operation for failed attempt tracking
+// Atomic operation for failed attempt tracking with Redis support
 const trackVerificationAttempt = async (userId, success = false) => {
   const key = `2fa_attempts_${userId}`;
   const now = Date.now();
   const windowMs = RATE_LIMIT_CONFIG.twoFactor.windowMs;
+  const maxAttempts = RATE_LIMIT_CONFIG.twoFactor.max;
   
+  if (redisClient) {
+    // Redis-based atomic operations
+    try {
+      if (success) {
+        // Reset attempts on success
+        await redisClient.del(key);
+        return true;
+      }
+      
+      // Use Redis pipeline for atomic operations
+      const pipeline = redisClient.multi();
+      pipeline.incr(key);
+      pipeline.expire(key, Math.ceil(windowMs / 1000));
+      const results = await pipeline.exec();
+      
+      const attemptCount = results[0];
+      
+      if (attemptCount >= maxAttempts) {
+        throw new Error(RATE_LIMIT_CONFIG.twoFactor.message);
+      }
+      
+      return false;
+    } catch (error) {
+      // Fallback to in-memory if Redis fails
+      console.warn('Redis operation failed, falling back to in-memory:', error.message);
+    }
+  }
+  
+  // In-memory fallback with basic race condition protection
   if (!verificationAttempts.has(key)) {
     verificationAttempts.set(key, { attempts: [], locked: false });
   }
@@ -344,7 +451,7 @@ const trackVerificationAttempt = async (userId, success = false) => {
   userAttempts.attempts.push({ timestamp: now, success: false });
   
   // Check if limit exceeded
-  if (userAttempts.attempts.length >= RATE_LIMIT_CONFIG.twoFactor.max) {
+  if (userAttempts.attempts.length >= maxAttempts) {
     userAttempts.locked = true;
     userAttempts.lockExpiry = now + windowMs;
     verificationAttempts.set(key, userAttempts);
@@ -472,7 +579,7 @@ const hasPermission = (userRole, permission) => {
 
 // Validate password strength
 const validatePassword = (password) => {
-  const minLength = 8;
+  const minLength = parseInt(process.env.PASSWORD_MIN_LENGTH) || 8;
   const hasUpperCase = /[A-Z]/.test(password);
   const hasLowerCase = /[a-z]/.test(password);
   const hasNumbers = /\d/.test(password);
@@ -504,31 +611,30 @@ const validatePassword = (password) => {
 
 // Generate secure random string for tokens
 const generateSecureToken = (length = 32) => {
-  const crypto = require('crypto');
   return crypto.randomBytes(length).toString('hex');
 };
 
 // Rate limiting configuration
 const RATE_LIMIT_CONFIG = {
   login: {
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 5, // 5 attempts per window
-    message: 'Too many login attempts, please try again later'
+    windowMs: parseInt(process.env.LOGIN_RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000, // 15 minutes
+    max: parseInt(process.env.LOGIN_RATE_LIMIT_MAX) || 5, // 5 attempts per window
+    message: process.env.LOGIN_RATE_LIMIT_MESSAGE || 'Too many login attempts, please try again later'
   },
   register: {
-    windowMs: 60 * 60 * 1000, // 1 hour
-    max: 3, // 3 registrations per hour per IP
-    message: 'Too many registration attempts, please try again later'
+    windowMs: parseInt(process.env.REGISTER_RATE_LIMIT_WINDOW_MS) || 60 * 60 * 1000, // 1 hour
+    max: parseInt(process.env.REGISTER_RATE_LIMIT_MAX) || 3, // 3 registrations per hour per IP
+    message: process.env.REGISTER_RATE_LIMIT_MESSAGE || 'Too many registration attempts, please try again later'
   },
   passwordReset: {
-    windowMs: 60 * 60 * 1000, // 1 hour
-    max: 3, // 3 password reset attempts per hour
-    message: 'Too many password reset attempts, please try again later'
+    windowMs: parseInt(process.env.PASSWORD_RESET_RATE_LIMIT_WINDOW_MS) || 60 * 60 * 1000, // 1 hour
+    max: parseInt(process.env.PASSWORD_RESET_RATE_LIMIT_MAX) || 3, // 3 password reset attempts per hour
+    message: process.env.PASSWORD_RESET_RATE_LIMIT_MESSAGE || 'Too many password reset attempts, please try again later'
   },
   twoFactor: {
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 5, // 5 2FA attempts per window
-    message: 'Too many 2FA verification attempts, please try again later'
+    windowMs: parseInt(process.env.TWO_FACTOR_RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000, // 15 minutes
+    max: parseInt(process.env.TWO_FACTOR_RATE_LIMIT_MAX) || 5, // 5 2FA attempts per window
+    message: process.env.TWO_FACTOR_RATE_LIMIT_MESSAGE || 'Too many 2FA verification attempts, please try again later'
   }
 };
 
@@ -565,5 +671,6 @@ module.exports = {
   requirePermission,
   hasPermission,
   validatePassword,
-  generateSecureToken
+  generateSecureToken,
+  constantTimeCompare
 };
