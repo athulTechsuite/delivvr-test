@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -21,9 +21,31 @@ const LoginForm = () => {
   const [tempToken, setTempToken] = useState('');
   const [smsRequestLoading, setSmsRequestLoading] = useState(false);
   const [smsCodeSent, setSmsCodeSent] = useState(false);
+  const [csrfToken, setCsrfToken] = useState('');
   const navigate = useNavigate();
   const { login } = useAuth();
   const { theme } = useTheme();
+
+  // Fetch CSRF token on component mount
+  useEffect(() => {
+    const fetchCsrfToken = async () => {
+      try {
+        const response = await fetch('/api/auth/csrf-token', {
+          method: 'GET',
+          credentials: 'include'
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          setCsrfToken(data.csrfToken);
+        }
+      } catch (error) {
+        console.error('Failed to fetch CSRF token:', error);
+      }
+    };
+
+    fetchCsrfToken();
+  }, []);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -106,8 +128,13 @@ const LoginForm = () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'X-CSRF-Token': csrfToken
         },
-        body: JSON.stringify(formData),
+        credentials: 'include',
+        body: JSON.stringify({
+          ...formData,
+          _token: csrfToken
+        }),
       });
 
       const data = await response.json();
@@ -150,11 +177,14 @@ const LoginForm = () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'X-CSRF-Token': csrfToken
         },
+        credentials: 'include',
         body: JSON.stringify({
           tempToken,
           code: twoFactorData.code,
-          method: twoFactorData.useRecoveryCode ? 'recovery' : selectedMethod
+          method: twoFactorData.useRecoveryCode ? 'recovery' : selectedMethod,
+          _token: csrfToken
         }),
       });
 
@@ -180,8 +210,13 @@ const LoginForm = () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'X-CSRF-Token': csrfToken
         },
-        body: JSON.stringify({ tempToken: token }),
+        credentials: 'include',
+        body: JSON.stringify({ 
+          tempToken: token,
+          _token: csrfToken 
+        }),
       });
 
       if (response.ok) {
