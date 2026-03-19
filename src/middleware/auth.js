@@ -60,8 +60,8 @@ const require2FA = async (req, res, next) => {
     });
   }
 
-  // Skip 2FA check if user hasn't enabled it
-  if (!req.user.twoFactorEnabled) {
+  // Skip 2FA check if user hasn't enabled it - explicit null/undefined check
+  if (req.user.twoFactorEnabled !== true) {
     return next();
   }
 
@@ -101,7 +101,7 @@ const verify2FACode = async (req, res, next) => {
     });
   }
 
-  if (!req.user.twoFactorEnabled || !req.user.twoFactorSecret) {
+  if (req.user.twoFactorEnabled !== true || !req.user.twoFactorSecret) {
     return res.status(400).json({
       success: false,
       message: '2FA not enabled for this account'
