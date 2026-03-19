@@ -418,5 +418,35 @@ describe('TwoFactorAuth Component', () => {
         expect(screen.getByText('Download New Codes')).toBeInTheDocument();
       });
     });
+
+    it('should show error when regenerating backup codes with invalid credentials', async () => {
+      mockAuthAPI.get2FAStatus = jest.fn().mockResolvedValue({
+        isEnabled: true,
+        enabledAt: '2023-12-01T00:00:00Z'
+      });
+      mockAuthAPI.regenerateBackupCodes = jest.fn().mockRejectedValue({
+        response: { data: { message: 'Invalid credentials' } }
+      });
+
+      render(<TwoFactorAuth />);
+
+      await waitFor(() => {
+        fireEvent.click(screen.getByText('Regenerate Backup Codes'));
+      });
+
+      await waitFor(() => {
+        fireEvent.change(screen.getByPlaceholderText('Current password'), {
+          target: { value: 'wrongpassword' }
+        });
+        fireEvent.change(screen.getByPlaceholderText('6-digit code from your authenticator'), {
+          target: { value: '000000' }
+        });
+        fireEvent.click(screen.getByText('Regenerate Codes'));
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText('Invalid credentials')).toBeInTheDocument();
+      });
+    });
   });
 });
