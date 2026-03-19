@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 
 const userSchema = new mongoose.Schema({
   firstName: {
@@ -69,6 +70,50 @@ const userSchema = new mongoose.Schema({
     default: 0
   },
   lockUntil: Date,
+  // Two-Factor Authentication fields
+  twoFactor: {
+    isEnabled: {
+      type: Boolean,
+      default: false
+    },
+    secret: {
+      type: String,
+      select: false
+    },
+    backupCodes: {
+      type: [{
+        code: {
+          type: String,
+          select: false,
+          validate: {
+            validator: function(v) {
+              return /^[A-F0-9]{8}$/.test(v);
+            },
+            message: 'Backup code must be 8 uppercase hexadecimal characters'
+          }
+        },
+        used: {
+          type: Boolean,
+          default: false
+        },
+        usedAt: Date
+      }],
+      validate: {
+        validator: function(v) {
+          return v.length >= 1 && v.length <= 20;
+        },
+        message: 'Backup codes array must contain between 1 and 20 codes'
+      },
+      default: []
+    },
+    enabledAt: Date,
+    lastUsed: Date
+  },
+  twoFactorAttempts: {
+    type: Number,
+    default: 0
+  },
+  twoFactorLockUntil: Date,
   // Customer specific fields
   wishlist: [{
     type: mongoose.Schema.Types.ObjectId,
@@ -117,6 +162,7 @@ const userSchema = new mongoose.Schema({
 userSchema.index({ email: 1 });
 userSchema.index({ role: 1 });
 userSchema.index({ isActive: 1 });
+userSchema.index({ 'twoFactor.isEnabled': 1 });
 
 // Virtual for full name
 userSchema.virtual('fullName').get(function() {
@@ -128,6 +174,11 @@ userSchema.virtual('isLocked').get(function() {
   return !!(this.lockUntil && this.lockUntil > Date.now());
 });
 
+// Virtual for 2FA lock status
+userSchema.virtual('isTwoFactorLocked').get(function() {
+  return !!(this.twoFactorLockUntil && this.twoFactorLockUntil > Date.now());
+});
+
 // Pre-save middleware to hash password
 userSchema.pre('save', async function(next) {
   if (!this.isModified('password')) return next();
@@ -135,6 +186,24 @@ userSchema.pre('save', async function(next) {
   try {
     const salt = await bcrypt.genSalt(12);
     this.password = await bcrypt.hash(this.password, salt);
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Pre-save middleware to hash backup codes
+userSchema.pre('save', async function(next) {
+  if (!this.isModified('twoFactor.backupCodes')) return next();
+  
+  try {
+    for (let i = 0; i < this.twoFactor.backupCodes.length; i++) {
+      const backupCode = this.twoFactor.backupCodes[i];
+      if (backupCode.isModified && backupCode.isModified('code')) {
+        const salt = await bcrypt.genSalt(12);
+        backupCode.code = await bcrypt.hash(backupCode.code, salt);
+      }
+    }
     next();
   } catch (error) {
     next(error);
@@ -177,6 +246,97 @@ userSchema.methods.resetLoginAttempts = function() {
   return this.updateOne({
     $unset: { loginAttempts: 1, lockUntil: 1 }
   });
+};
+
+// Method to increment 2FA attempts
+userSchema.methods.incTwoFactorAttempts = function() {
+  // If we have a previous lock that has expired, restart at 1
+  if (this.twoFactorLockUntil && this.twoFactorLockUntil < Date.now()) {
+    return this.updateOne({
+      $unset: { twoFactorLockUntil: 1 },
+      $set: { twoFactorAttempts: 1 }
+    });
+  }
+
+  const updates = { $inc: { twoFactorAttempts: 1 } };
+  
+  // Lock 2FA after 5 failed attempts for 15 minutes
+  if (this.twoFactorAttempts + 1 >= 5 && !this.isTwoFactorLocked) {
+    updates.$set = {
+      twoFactorLockUntil: Date.now() + 15 * 60 * 1000 // 15 minutes
+    };
+  }
+
+  return this.updateOne(updates);
+};
+
+// Method to reset 2FA attempts
+userSchema.methods.resetTwoFactorAttempts = function() {
+  return this.updateOne({
+    $unset: { twoFactorAttempts: 1, twoFactorLockUntil: 1 }
+  });
+};
+
+// Method to enable 2FA
+userSchema.methods.enableTwoFactor = function(secret, backupCodes) {
+  this.twoFactor.isEnabled = true;
+  this.twoFactor.secret = secret;
+  this.twoFactor.backupCodes = backupCodes.map(code => ({
+    code,
+    used: false
+  }));
+  this.twoFactor.enabledAt = new Date();
+  
+  return this.save();
+};
+
+// Method to disable 2FA
+userSchema.methods.disableTwoFactor = function() {
+  this.twoFactor.isEnabled = false;
+  this.twoFactor.secret = undefined;
+  this.twoFactor.backupCodes = [];
+  this.twoFactor.enabledAt = undefined;
+  this.twoFactor.lastUsed = undefined;
+  
+  return this.save();
+};
+
+// Method to use backup code
+userSchema.methods.useBackupCode = async function(candidateCode) {
+  if (!this.twoFactor.isEnabled || !this.twoFactor.backupCodes.length) {
+    return false;
+  }
+
+  for (let backupCode of this.twoFactor.backupCodes) {
+    if (!backupCode.used) {
+      const isMatch = await bcrypt.compare(candidateCode, backupCode.code);
+      if (isMatch) {
+        backupCode.used = true;
+        backupCode.usedAt = new Date();
+        this.twoFactor.lastUsed = new Date();
+        await this.save();
+        return true;
+      }
+    }
+  }
+  
+  return false;
+};
+
+// Method to regenerate backup codes
+userSchema.methods.regenerateBackupCodes = function(newBackupCodes) {
+  this.twoFactor.backupCodes = newBackupCodes.map(code => ({
+    code,
+    used: false
+  }));
+  
+  return this.save();
+};
+
+// Method to get unused backup codes count
+userSchema.methods.getUnusedBackupCodesCount = function() {
+  if (!this.twoFactor.backupCodes) return 0;
+  return this.twoFactor.backupCodes.filter(code => !code.used).length;
 };
 
 // Method to add item to cart
@@ -227,9 +387,9 @@ userSchema.methods.removeFromWishlist = function(productId) {
 
 // Method to generate password reset token
 userSchema.methods.createPasswordResetToken = function() {
-  const resetToken = require('crypto').randomBytes(32).toString('hex');
+  const resetToken = crypto.randomBytes(32).toString('hex');
   
-  this.passwordResetToken = require('crypto')
+  this.passwordResetToken = crypto
     .createHash('sha256')
     .update(resetToken)
     .digest('hex');
@@ -241,14 +401,25 @@ userSchema.methods.createPasswordResetToken = function() {
 
 // Method to generate email verification token
 userSchema.methods.createEmailVerificationToken = function() {
-  const verificationToken = require('crypto').randomBytes(32).toString('hex');
+  const verificationToken = crypto.randomBytes(32).toString('hex');
   
-  this.emailVerificationToken = require('crypto')
+  this.emailVerificationToken = crypto
     .createHash('sha256')
     .update(verificationToken)
     .digest('hex');
   
   return verificationToken;
+};
+
+// Method to generate backup codes
+userSchema.methods.generateBackupCodes = function(count = 8) {
+  const codes = [];
+  for (let i = 0; i < count; i++) {
+    // Generate 8-character alphanumeric backup codes
+    const code = crypto.randomBytes(4).toString('hex').toUpperCase();
+    codes.push(code);
+  }
+  return codes;
 };
 
 // Static method to find user by credentials
@@ -279,16 +450,28 @@ userSchema.statics.findByCredentials = async function(email, password) {
     await user.resetLoginAttempts();
   }
 
-  // Update last login
-  user.lastLogin = new Date();
-  await user.save();
+  // Update last login only if 2FA is disabled or after 2FA verification
+  if (!user.twoFactor.isEnabled) {
+    user.lastLogin = new Date();
+    await user.save();
+  }
 
   return user;
 };
 
-// Static method to get users by role
+// Static method to get users by role with safe projection
 userSchema.statics.findByRole = function(role) {
-  return this.find({ role, isActive: true });
+  return this.find({ role, isActive: true }).select('-password -twoFactor.secret');
+};
+
+// Static method to find by ID with safe projection (for non-authentication queries)
+userSchema.statics.findByIdSafe = function(id) {
+  return this.findById(id).select('-password -twoFactor.secret');
+};
+
+// Static method to find one with safe projection (for non-authentication queries)
+userSchema.statics.findOneSafe = function(query) {
+  return this.findOne(query).select('-password -twoFactor.secret');
 };
 
 // Remove sensitive data from JSON output
@@ -301,6 +484,20 @@ userSchema.methods.toJSON = function() {
   delete user.emailVerificationToken;
   delete user.loginAttempts;
   delete user.lockUntil;
+  delete user.twoFactorAttempts;
+  delete user.twoFactorLockUntil;
+  
+  // Remove sensitive 2FA data
+  if (user.twoFactor) {
+    delete user.twoFactor.secret;
+    delete user.twoFactor.backupCodes;
+    // Only keep public 2FA info
+    user.twoFactor = {
+      isEnabled: user.twoFactor.isEnabled,
+      enabledAt: user.twoFactor.enabledAt,
+      lastUsed: user.twoFactor.lastUsed
+    };
+  }
   
   return user;
 };

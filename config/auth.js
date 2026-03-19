@@ -57,6 +57,18 @@ const ROLE_PERMISSIONS = {
   ]
 };
 
+// Two-Factor Authentication Configuration
+const TWO_FA_CONFIG = {
+  issuer: process.env.TWO_FA_ISSUER || 'Delivvr',
+  tokenWindow: 2, // Allow tokens from 2 steps before/after for clock skew
+  backupCodeCount: 10,
+  backupCodeLength: 8,
+  maxFailedAttempts: 5,
+  lockoutDurationMs: 15 * 60 * 1000, // 15 minutes
+  rateLimitWindowMs: 15 * 60 * 1000, // 15 minutes
+  maxAttemptsPerWindow: 5
+};
+
 // Generate JWT Token
 const generateToken = (payload) => {
   return jwt.sign(payload, JWT_CONFIG.secret, {
@@ -83,12 +95,55 @@ const verifyToken = (token) => {
 // Hash Password
 const hashPassword = async (password) => {
   const saltRounds = 12;
-  return await bcrypt.hash(password, saltRounds);
+  return await bcrypt.hash(password, hashedPassword);
 };
 
 // Compare Password
 const comparePassword = async (password, hashedPassword) => {
   return await bcrypt.compare(password, hashedPassword);
+};
+
+// Generate backup codes for 2FA
+const generateBackupCodes = () => {
+  const crypto = require('crypto');
+  const codes = [];
+  
+  for (let i = 0; i < TWO_FA_CONFIG.backupCodeCount; i++) {
+    const code = crypto.randomBytes(TWO_FA_CONFIG.backupCodeLength / 2).toString('hex').toUpperCase();
+    codes.push(code);
+  }
+  
+  return codes;
+};
+
+// Hash backup codes for secure storage
+const hashBackupCodes = async (codes) => {
+  const hashedCodes = [];
+  for (const code of codes) {
+    const hashed = await bcrypt.hash(code, 12);
+    hashedCodes.push(hashed);
+  }
+  return hashedCodes;
+};
+
+// Verify backup code
+const verifyBackupCode = async (inputCode, hashedCodes) => {
+  for (const hashedCode of hashedCodes) {
+    const isMatch = await bcrypt.compare(inputCode.toUpperCase(), hashedCode);
+    if (isMatch) {
+      return true;
+    }
+  }
+  return false;
+};
+
+// Format backup codes for display
+const formatBackupCodes = (codes) => {
+  return codes.map(code => {
+    // Insert hyphen in middle for readability (e.g., ABCD-EFGH)
+    const middle = Math.floor(code.length / 2);
+    return `${code.slice(0, middle)}-${code.slice(middle)}`;
+  });
 };
 
 // Middleware to authenticate JWT token
@@ -113,6 +168,27 @@ const authenticateToken = (req, res, next) => {
       message: 'Invalid or expired token' 
     });
   }
+};
+
+// Middleware to require 2FA verification for sensitive operations
+const require2FA = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ 
+      success: false, 
+      message: 'Authentication required' 
+    });
+  }
+
+  // Check if user has 2FA enabled and if the token includes 2FA verification
+  if (req.user.twoFactorEnabled && !req.user.twoFactorVerified) {
+    return res.status(403).json({ 
+      success: false, 
+      message: '2FA verification required for this action',
+      requiresTwoFactor: true
+    });
+  }
+
+  next();
 };
 
 // Middleware to authorize user roles
@@ -229,6 +305,11 @@ const RATE_LIMIT_CONFIG = {
     windowMs: 60 * 60 * 1000, // 1 hour
     max: 3, // 3 password reset attempts per hour
     message: 'Too many password reset attempts, please try again later'
+  },
+  twoFactor: {
+    windowMs: TWO_FA_CONFIG.rateLimitWindowMs,
+    max: TWO_FA_CONFIG.maxAttemptsPerWindow,
+    message: 'Too many 2FA attempts, please try again later'
   }
 };
 
@@ -236,13 +317,19 @@ module.exports = {
   JWT_CONFIG,
   USER_ROLES,
   ROLE_PERMISSIONS,
+  TWO_FA_CONFIG,
   RATE_LIMIT_CONFIG,
   generateToken,
   generateRefreshToken,
   verifyToken,
   hashPassword,
   comparePassword,
+  generateBackupCodes,
+  hashBackupCodes,
+  verifyBackupCode,
+  formatBackupCodes,
   authenticateToken,
+  require2FA,
   authorizeRoles,
   requirePermission,
   hasPermission,
