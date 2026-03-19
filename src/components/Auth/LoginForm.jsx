@@ -20,6 +20,7 @@ const LoginForm = () => {
   const [selectedMethod, setSelectedMethod] = useState('');
   const [tempToken, setTempToken] = useState('');
   const [smsRequestLoading, setSmsRequestLoading] = useState(false);
+  const [smsCodeSent, setSmsCodeSent] = useState(false);
   const navigate = useNavigate();
   const { login } = useAuth();
   const { theme } = useTheme();
@@ -118,11 +119,7 @@ const LoginForm = () => {
           setTwoFactorMethods(data.availableMethods || []);
           setSelectedMethod(data.availableMethods?.[0] || '');
           setTempToken(data.tempToken);
-          
-          // If SMS is the default method, automatically send SMS
-          if (data.availableMethods?.includes('sms') && data.availableMethods[0] === 'sms') {
-            await requestSmsCode(data.tempToken);
-          }
+          setSmsCodeSent(false);
         } else {
           // No 2FA required, complete login
           completeLogin(data);
@@ -187,7 +184,10 @@ const LoginForm = () => {
         body: JSON.stringify({ tempToken: token }),
       });
 
-      if (!response.ok) {
+      if (response.ok) {
+        setSmsCodeSent(true);
+        setErrors(prev => ({ ...prev, twoFactor: '' }));
+      } else {
         const data = await response.json();
         setErrors({ twoFactor: data.message || 'Failed to send SMS code' });
       }
@@ -216,11 +216,7 @@ const LoginForm = () => {
     setSelectedMethod(method);
     setTwoFactorData(prev => ({ ...prev, code: '' }));
     setErrors({});
-    
-    // If switching to SMS, request a new code
-    if (method === 'sms') {
-      await requestSmsCode();
-    }
+    setSmsCodeSent(false);
   };
 
   const handleBackToLogin = () => {
@@ -228,6 +224,7 @@ const LoginForm = () => {
     setTwoFactorData({ code: '', useRecoveryCode: false });
     setErrors({});
     setTempToken('');
+    setSmsCodeSent(false);
   };
 
   const getRoleBasedRedirect = (role) => {
@@ -302,14 +299,28 @@ const LoginForm = () => {
 
             {selectedMethod === 'sms' && !twoFactorData.useRecoveryCode && (
               <div className="sms-actions">
-                <button
-                  type="button"
-                  className="resend-sms-button"
-                  onClick={() => requestSmsCode()}
-                  disabled={smsRequestLoading || isLoading}
-                >
-                  {smsRequestLoading ? 'Sending...' : 'Resend SMS Code'}
-                </button>
+                {!smsCodeSent ? (
+                  <button
+                    type="button"
+                    className="request-sms-button"
+                    onClick={() => requestSmsCode()}
+                    disabled={smsRequestLoading || isLoading}
+                  >
+                    {smsRequestLoading ? 'Sending...' : 'Send SMS Code'}
+                  </button>
+                ) : (
+                  <div className="sms-sent-info">
+                    <p>SMS code sent! Check your phone.</p>
+                    <button
+                      type="button"
+                      className="resend-sms-button"
+                      onClick={() => requestSmsCode()}
+                      disabled={smsRequestLoading || isLoading}
+                    >
+                      {smsRequestLoading ? 'Sending...' : 'Resend SMS Code'}
+                    </button>
+                  </div>
+                )}
               </div>
             )}
 
@@ -330,7 +341,7 @@ const LoginForm = () => {
             <button
               type="submit"
               className={`login-button ${isLoading ? 'loading' : ''}`}
-              disabled={isLoading}
+              disabled={isLoading || (selectedMethod === 'sms' && !smsCodeSent && !twoFactorData.useRecoveryCode)}
             >
               {isLoading ? (
                 <>
