@@ -1,7 +1,6 @@
-import React, { useState, useRef } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import React, { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../../hooks/useAuth';
-import { useTheme } from '../../contexts/ThemeContext';
+import { AUTH_CONFIG } from '../../config/auth';
 import './LoginForm.css';
 
 const LoginForm = () => {
@@ -12,19 +11,61 @@ const LoginForm = () => {
   });
   const [errors, setErrors] = useState({});
   const [isLoading, setIsLoading] = useState(false);
-  const [requiresTwoFactor, setRequiresTwoFactor] = useState(false);
-  const [tempToken, setTempToken] = useState('');
-  const navigate = useNavigate();
-  const { login } = useAuth();
-  const { theme } = useTheme();
-  const submitRequestRef = useRef(null);
+  const [showTwoFactor, setShowTwoFactor] = useState(false);
+  const [loginAttempts, setLoginAttempts] = useState(0);
+  
+  const { login, verifyTwoFactor } = useAuth();
+  const twoFactorInputRef = useRef(null);
 
-  const handleChange = (e) => {
+  useEffect(() => {
+    if (showTwoFactor && twoFactorInputRef.current) {
+      twoFactorInputRef.current.focus();
+      // Announce to screen readers
+      const announcement = document.createElement('div');
+      announcement.setAttribute('aria-live', 'polite');
+      announcement.setAttribute('aria-atomic', 'true');
+      announcement.className = 'sr-only';
+      announcement.textContent = 'Two-factor authentication required. Please enter your 6-digit verification code.';
+      document.body.appendChild(announcement);
+      
+      setTimeout(() => {
+        document.body.removeChild(announcement);
+      }, 1000);
+    }
+  }, [showTwoFactor]);
+
+  const validateForm = () => {
+    const newErrors = {};
+    
+    if (!formData.email.trim()) {
+      newErrors.email = 'Email is required';
+    } else if (!/\S+@\S+\.\S+/.test(formData.email)) {
+      newErrors.email = 'Email is invalid';
+    }
+    
+    if (!formData.password.trim()) {
+      newErrors.password = 'Password is required';
+    } else if (formData.password.length < 8) {
+      newErrors.password = 'Password must be at least 8 characters';
+    }
+    
+    if (showTwoFactor && !formData.twoFactorCode.trim()) {
+      newErrors.twoFactorCode = 'Two-factor code is required';
+    } else if (showTwoFactor && formData.twoFactorCode.length !== AUTH_CONFIG.TWO_FACTOR_CODE_LENGTH) {
+      newErrors.twoFactorCode = `Two-factor code must be ${AUTH_CONFIG.TWO_FACTOR_CODE_LENGTH} digits`;
+    }
+    
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
+  const handleInputChange = (e) => {
     const { name, value } = e.target;
     setFormData(prev => ({
       ...prev,
       [name]: value
     }));
+    
     // Clear error when user starts typing
     if (errors[name]) {
       setErrors(prev => ({
@@ -34,327 +75,251 @@ const LoginForm = () => {
     }
   };
 
-  const validateForm = () => {
-    const newErrors = {};
-
-    if (!requiresTwoFactor) {
-      if (!formData.email) {
-        newErrors.email = 'Email is required';
-      } else if (!/\S+@\S+\.\S+/.test(formData.email)) {
-        newErrors.email = 'Email is invalid';
-      }
-
-      if (!formData.password) {
-        newErrors.password = 'Password is required';
-      } else if (formData.password.length < 6) {
-        newErrors.password = 'Password must be at least 6 characters';
-      }
-    } else {
-      if (!formData.twoFactorCode) {
-        newErrors.twoFactorCode = '2FA code is required';
-      } else if (!/^\d{6}$/.test(formData.twoFactorCode)) {
-        newErrors.twoFactorCode = '2FA code must be 6 digits';
-      }
-    }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
   const handleSubmit = async (e) => {
     e.preventDefault();
     
     if (!validateForm()) {
       return;
     }
-
-    // Prevent race conditions by checking if already submitting
-    if (isLoading || submitRequestRef.current) {
-      return;
-    }
-
+    
     setIsLoading(true);
-    setErrors({});
-
+    
     try {
-      if (!requiresTwoFactor) {
-        // First step: email and password
-        const abortController = new AbortController();
-        submitRequestRef.current = abortController;
-
-        const response = await fetch('/api/auth/login', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            email: formData.email,
-            password: formData.password
-          }),
-          signal: abortController.signal,
-        });
-
-        const data = await response.json();
-
-        if (response.ok) {
-          if (data.requiresTwoFactor) {
-            // User has 2FA enabled, show 2FA form
-            setRequiresTwoFactor(true);
-            setTempToken(data.tempToken);
-          } else {
-            // No 2FA required, complete login
-            completeLogin(data);
-          }
-        } else {
-          setErrors({ general: data.message || 'Login failed. Please try again.' });
-        }
+      if (showTwoFactor) {
+        await verifyTwoFactor(formData.email, formData.twoFactorCode);
       } else {
-        // Second step: 2FA verification
-        // Validate tempToken exists before making request
-        if (!tempToken) {
-          setErrors({ general: 'Authentication session expired. Please log in again.' });
-          handleBackToLogin();
+        const result = await login(formData.email, formData.password);
+        if (result.requiresTwoFactor) {
+          setShowTwoFactor(true);
           return;
         }
-
-        const abortController = new AbortController();
-        submitRequestRef.current = abortController;
-
-        const response = await fetch('/api/auth/verify-2fa', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${tempToken}`
-          },
-          body: JSON.stringify({
-            twoFactorCode: formData.twoFactorCode
-          }),
-          signal: abortController.signal,
-        });
-
-        const data = await response.json();
-
-        if (response.ok) {
-          completeLogin(data);
-        } else {
-          setErrors({ 
-            twoFactorCode: data.message || 'Invalid 2FA code. Please try again.' 
-          });
-        }
       }
+      
+      // Reset form on success
+      setFormData({
+        email: '',
+        password: '',
+        twoFactorCode: ''
+      });
+      setLoginAttempts(0);
+      setShowTwoFactor(false);
+      
     } catch (error) {
-      // Don't show error if request was aborted (race condition prevention)
-      if (error.name !== 'AbortError') {
-        console.error('Login error:', error);
-        setErrors({ general: 'Network error. Please check your connection and try again.' });
+      setLoginAttempts(prev => prev + 1);
+      
+      if (error.message.includes('two-factor')) {
+        setErrors({ twoFactorCode: error.message });
+      } else if (error.message.includes('password')) {
+        setErrors({ password: error.message });
+      } else if (error.message.includes('email')) {
+        setErrors({ email: error.message });
+      } else {
+        setErrors({ general: error.message || 'Login failed. Please try again.' });
+      }
+      
+      // Reset 2FA state on auth failure
+      if (showTwoFactor && error.message.includes('Invalid')) {
+        setFormData(prev => ({
+          ...prev,
+          twoFactorCode: ''
+        }));
       }
     } finally {
       setIsLoading(false);
-      submitRequestRef.current = null;
     }
-  };
-
-  const completeLogin = (data) => {
-    // Store token and user data
-    localStorage.setItem('token', data.token);
-    localStorage.setItem('user', JSON.stringify(data.user));
-    
-    // Update auth context
-    login(data.user, data.token);
-
-    // Redirect based on user role
-    const redirectPath = getRoleBasedRedirect(data.user.role);
-    navigate(redirectPath, { replace: true });
   };
 
   const handleBackToLogin = () => {
-    // Cancel any ongoing request
-    if (submitRequestRef.current) {
-      submitRequestRef.current.abort();
-      submitRequestRef.current = null;
-    }
-    
-    setRequiresTwoFactor(false);
-    setTempToken('');
+    setShowTwoFactor(false);
     setFormData(prev => ({
       ...prev,
       twoFactorCode: ''
     }));
     setErrors({});
-    setIsLoading(false);
   };
 
-  const getRoleBasedRedirect = (role) => {
-    switch (role) {
-      case 'admin':
-        return '/admin/dashboard';
-      case 'vendor':
-        return '/vendor/dashboard';
-      case 'customer':
-      default:
-        return '/dashboard';
-    }
-  };
+  const isAccountLocked = loginAttempts >= AUTH_CONFIG.MAX_LOGIN_ATTEMPTS;
 
   return (
-    <div className={`login-form-container ${theme}`} data-theme={theme}>
+    <div className="login-form-container">
       <div className="login-form-card">
         <div className="login-header">
-          <h2>{requiresTwoFactor ? 'Two-Factor Authentication' : 'Welcome Back'}</h2>
-          <p>
-            {requiresTwoFactor 
-              ? 'Enter the 6-digit code from your authenticator app'
-              : 'Sign in to your account'
+          <h1 className="login-title">
+            {showTwoFactor ? 'Enter Verification Code' : 'Sign In'}
+          </h1>
+          <p className="login-subtitle">
+            {showTwoFactor 
+              ? 'We sent a verification code to your authenticator app'
+              : 'Welcome back! Please sign in to your account'
             }
           </p>
         </div>
 
-        {errors.general && (
-          <div className="error-message general-error">
-            {errors.general}
-          </div>
-        )}
+        <form onSubmit={handleSubmit} className="login-form" noValidate>
+          {errors.general && (
+            <div 
+              className="error-banner"
+              role="alert"
+              aria-live="polite"
+            >
+              {errors.general}
+            </div>
+          )}
+          
+          {isAccountLocked && (
+            <div 
+              className="warning-banner"
+              role="alert"
+              aria-live="polite"
+            >
+              Account temporarily locked due to multiple failed attempts. Please try again later.
+            </div>
+          )}
 
-        <form onSubmit={handleSubmit} className="login-form">
-          {!requiresTwoFactor ? (
-            // Standard login form
+          {!showTwoFactor ? (
             <>
               <div className="form-group">
-                <label htmlFor="email">Email Address</label>
+                <label htmlFor="email" className="form-label">
+                  Email Address
+                </label>
                 <input
                   type="email"
                   id="email"
                   name="email"
                   value={formData.email}
-                  onChange={handleChange}
-                  className={errors.email ? 'error' : ''}
+                  onChange={handleInputChange}
+                  className={`form-input ${errors.email ? 'error' : ''}`}
                   placeholder="Enter your email"
-                  disabled={isLoading}
+                  disabled={isLoading || isAccountLocked}
+                  aria-describedby={errors.email ? 'email-error' : undefined}
+                  aria-invalid={errors.email ? 'true' : 'false'}
+                  autoComplete="email"
+                  required
                 />
-                {errors.email && <span className="error-message">{errors.email}</span>}
+                {errors.email && (
+                  <span 
+                    id="email-error" 
+                    className="error-text"
+                    role="alert"
+                  >
+                    {errors.email}
+                  </span>
+                )}
               </div>
 
               <div className="form-group">
-                <label htmlFor="password">Password</label>
+                <label htmlFor="password" className="form-label">
+                  Password
+                </label>
                 <input
                   type="password"
                   id="password"
                   name="password"
                   value={formData.password}
-                  onChange={handleChange}
-                  className={errors.password ? 'error' : ''}
+                  onChange={handleInputChange}
+                  className={`form-input ${errors.password ? 'error' : ''}`}
                   placeholder="Enter your password"
-                  disabled={isLoading}
+                  disabled={isLoading || isAccountLocked}
+                  aria-describedby={errors.password ? 'password-error' : undefined}
+                  aria-invalid={errors.password ? 'true' : 'false'}
+                  autoComplete="current-password"
+                  required
                 />
-                {errors.password && <span className="error-message">{errors.password}</span>}
-              </div>
-
-              <div className="form-options">
-                <label className="checkbox-container">
-                  <input type="checkbox" />
-                  <span className="checkmark"></span>
-                  Remember me
-                </label>
-                <Link to="/forgot-password" className="forgot-password-link">
-                  Forgot password?
-                </Link>
+                {errors.password && (
+                  <span 
+                    id="password-error" 
+                    className="error-text"
+                    role="alert"
+                  >
+                    {errors.password}
+                  </span>
+                )}
               </div>
             </>
           ) : (
-            // 2FA verification form
             <div className="two-factor-section">
               <div className="form-group">
-                <label htmlFor="twoFactorCode">Authentication Code</label>
+                <label htmlFor="twoFactorCode" className="form-label">
+                  Verification Code
+                </label>
                 <input
                   type="text"
                   id="twoFactorCode"
                   name="twoFactorCode"
                   value={formData.twoFactorCode}
-                  onChange={handleChange}
-                  className={errors.twoFactorCode ? 'error' : ''}
+                  onChange={handleInputChange}
+                  className={`form-input two-factor-input ${errors.twoFactorCode ? 'error' : ''}`}
                   placeholder="000000"
-                  maxLength="6"
+                  maxLength={AUTH_CONFIG.TWO_FACTOR_CODE_LENGTH}
                   disabled={isLoading}
+                  ref={twoFactorInputRef}
+                  aria-describedby="two-factor-help two-factor-error"
+                  aria-invalid={errors.twoFactorCode ? 'true' : 'false'}
                   autoComplete="one-time-code"
-                  style={{ textAlign: 'center', fontSize: '1.2em', letterSpacing: '0.2em' }}
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  role="textbox"
+                  required
                 />
-                {errors.twoFactorCode && <span className="error-message">{errors.twoFactorCode}</span>}
+                <div id="two-factor-help" className="form-help-text">
+                  Enter the {AUTH_CONFIG.TWO_FACTOR_CODE_LENGTH}-digit code from your authenticator app
+                </div>
+                {errors.twoFactorCode && (
+                  <span 
+                    id="two-factor-error" 
+                    className="error-text"
+                    role="alert"
+                    aria-live="polite"
+                  >
+                    {errors.twoFactorCode}
+                  </span>
+                )}
               </div>
 
-              <div className="two-factor-help">
-                <p className="help-text">
-                  Open your authenticator app (Google Authenticator, Authy, etc.) and enter the 6-digit code.
-                </p>
-                <button
-                  type="button"
-                  className="back-to-login-button"
-                  onClick={handleBackToLogin}
-                  disabled={isLoading}
-                >
-                  ← Back to login
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={handleBackToLogin}
+                className="back-button"
+                disabled={isLoading}
+                aria-label="Go back to login form"
+              >
+                ← Back to Login
+              </button>
             </div>
           )}
 
-          <button
-            type="submit"
-            className={`login-button ${isLoading ? 'loading' : ''}`}
-            disabled={isLoading}
-          >
-            {isLoading ? (
-              <>
-                <span className="spinner"></span>
-                {requiresTwoFactor ? 'Verifying...' : 'Signing in...'}
-              </>
-            ) : (
-              requiresTwoFactor ? 'Verify & Sign In' : 'Sign In'
-            )}
-          </button>
-        </form>
-
-        {!requiresTwoFactor && (
-          <>
-            <div className="login-footer">
-              <p>
-                Don't have an account?{' '}
-                <Link to="/register" className="register-link">
-                  Sign up
-                </Link>
-              </p>
-            </div>
-
-            <div className="demo-accounts">
-              <p className="demo-title">Demo Accounts:</p>
-              <div className="demo-buttons">
-                <button
-                  type="button"
-                  className="demo-button customer"
-                  onClick={() => setFormData({ email: 'customer@demo.com', password: 'demo123', twoFactorCode: '' })}
-                  disabled={isLoading}
-                >
-                  Customer Demo
-                </button>
-                <button
-                  type="button"
-                  className="demo-button admin"
-                  onClick={() => setFormData({ email: 'admin@demo.com', password: 'demo123', twoFactorCode: '' })}
-                  disabled={isLoading}
-                >
-                  Admin Demo
-                </button>
-                <button
-                  type="button"
-                  className="demo-button vendor"
-                  onClick={() => setFormData({ email: 'vendor@demo.com', password: 'demo123', twoFactorCode: '' })}
-                  disabled={isLoading}
-                >
-                  Vendor Demo
-                </button>
+          <div className="form-actions">
+            <button
+              type="submit"
+              className="submit-button"
+              disabled={isLoading || isAccountLocked}
+              aria-describedby={isAccountLocked ? 'account-locked-help' : undefined}
+            >
+              {isLoading ? (
+                <>
+                  <span className="loading-spinner" aria-hidden="true"></span>
+                  {showTwoFactor ? 'Verifying...' : 'Signing in...'}
+                </>
+              ) : (
+                showTwoFactor ? 'Verify Code' : 'Sign In'
+              )}
+            </button>
+            
+            {isAccountLocked && (
+              <div id="account-locked-help" className="form-help-text">
+                Please wait before attempting to sign in again
               </div>
+            )}
+          </div>
+
+          {!showTwoFactor && (
+            <div className="form-footer">
+              <a href="/forgot-password" className="forgot-password-link">
+                Forgot your password?
+              </a>
             </div>
-          </>
-        )}
+          )}
+        </form>
       </div>
     </div>
   );

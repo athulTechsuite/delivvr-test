@@ -53,14 +53,29 @@ const JWT_CONFIG = {
   refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '30d'
 };
 
+// Backup code configuration constants with validation
+const BACKUP_CODE_CONFIG = {
+  length: parseInt(process.env.BACKUP_CODE_LENGTH) || 8,
+  count: parseInt(process.env.BACKUP_CODE_COUNT) || 10
+};
+
+// Validate backup code configuration
+if (BACKUP_CODE_CONFIG.length < 6 || BACKUP_CODE_CONFIG.length > 16) {
+  throw new Error('BACKUP_CODE_LENGTH must be between 6 and 16 characters');
+}
+
+if (BACKUP_CODE_CONFIG.count < 5 || BACKUP_CODE_CONFIG.count > 20) {
+  throw new Error('BACKUP_CODE_COUNT must be between 5 and 20 codes');
+}
+
 // 2FA Configuration
 const TWO_FA_CONFIG = {
   serviceName: process.env.APP_NAME || 'Delivvr',
   window: 1, // Allow 1 window before and after current window (30 seconds each)
   step: 30, // 30 second time step
   encoding: 'base32',
-  backupCodeLength: 8,
-  backupCodeCount: 10
+  backupCodeLength: BACKUP_CODE_CONFIG.length,
+  backupCodeCount: BACKUP_CODE_CONFIG.count
 };
 
 // Encryption configuration for 2FA secrets
@@ -320,7 +335,7 @@ const verifyBackupCode = async (inputCode, hashedCodes, userId) => {
   }
 };
 
-// Send 2FA status change email notification
+// Send 2FA status change email notification with proper error logging
 const send2FANotificationEmail = async (userEmail, userName, action, ipAddress) => {
   try {
     const emailService = require('../services/emailService');
@@ -345,9 +360,33 @@ const send2FANotificationEmail = async (userEmail, userName, action, ipAddress) 
       subject,
       html: emailTemplate
     });
+
+    // Log successful email send for monitoring
+    console.log(`2FA notification email sent successfully to ${userEmail} for action: ${action}`);
   } catch (error) {
-    console.error('Failed to send 2FA notification email:', error);
+    // Enhanced error logging for monitoring and debugging
+    const errorContext = {
+      userEmail,
+      userName,
+      action,
+      ipAddress,
+      timestamp: new Date().toISOString(),
+      error: error.message,
+      stack: error.stack
+    };
+
+    console.error('Failed to send 2FA notification email:', errorContext);
+    
+    // Log to monitoring service if available
+    try {
+      const monitoringService = require('../services/monitoringService');
+      await monitoringService.logError('2fa_email_failure', errorContext);
+    } catch (monitoringError) {
+      console.error('Failed to log to monitoring service:', monitoringError.message);
+    }
+    
     // Don't throw error to prevent blocking the main 2FA operation
+    // The caller should check if email notification is critical for their use case
   }
 };
 
@@ -686,6 +725,7 @@ const RATE_LIMIT_CONFIG = {
 module.exports = {
   JWT_CONFIG,
   TWO_FA_CONFIG,
+  BACKUP_CODE_CONFIG,
   USER_ROLES,
   ROLE_PERMISSIONS,
   RATE_LIMIT_CONFIG,
