@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useTheme } from '../../contexts/ThemeContext';
+import TwoFactorAuth from './TwoFactorAuth';
 import './Settings.css';
 
 const Settings = () => {
@@ -43,6 +44,21 @@ const Settings = () => {
       </div>
       
       <div className="settings-content">
+        <div className="settings-section">
+          <h2 className="section-title">Security</h2>
+          
+          <div className="setting-group">
+            <div className="setting-header">
+              <h3>Two-Factor Authentication</h3>
+              <p className="setting-description">
+                Add an extra layer of security to your account
+              </p>
+            </div>
+            
+            <TwoFactorAuth />
+          </div>
+        </div>
+
         <div className="settings-section">
           <h2 className="section-title">Appearance</h2>
           
