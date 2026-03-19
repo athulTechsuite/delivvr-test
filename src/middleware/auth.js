@@ -33,6 +33,15 @@ const authenticateToken = async (req, res, next) => {
       });
     }
 
+    // Check if account is locked due to failed 2FA attempts
+    if (user.twoFactorAuth?.isLocked && user.twoFactorAuth?.lockUntil > new Date()) {
+      const remainingTime = Math.ceil((user.twoFactorAuth.lockUntil - new Date()) / (1000 * 60));
+      return res.status(423).json({
+        success: false,
+        message: `Account temporarily locked due to multiple failed 2FA attempts. Try again in ${remainingTime} minutes.`
+      });
+    }
+
     req.user = user;
     next();
   } catch (error) {
@@ -48,6 +57,120 @@ const authenticateToken = async (req, res, next) => {
       message: 'Invalid token' 
     });
   }
+};
+
+// Middleware to check 2FA verification status
+const require2FA = async (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ 
+      success: false, 
+      message: 'Authentication required' 
+    });
+  }
+
+  // Skip 2FA check if user doesn't have it enabled
+  if (!req.user.twoFactorAuth?.isEnabled) {
+    return next();
+  }
+
+  // Check if account is locked due to failed 2FA attempts
+  if (req.user.twoFactorAuth?.isLocked && req.user.twoFactorAuth?.lockUntil > new Date()) {
+    const remainingTime = Math.ceil((req.user.twoFactorAuth.lockUntil - new Date()) / (1000 * 60));
+    return res.status(423).json({
+      success: false,
+      message: `Account temporarily locked due to multiple failed 2FA attempts. Try again in ${remainingTime} minutes.`
+    });
+  }
+
+  // Check if user has completed 2FA verification in this session
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    
+    // If token doesn't have 2FA verification flag, user needs to complete 2FA
+    if (!decoded.twoFactorVerified) {
+      return res.status(202).json({
+        success: false,
+        message: 'Two-factor authentication required',
+        requiresTwoFactor: true,
+        methods: {
+          totp: req.user.twoFactorAuth.totp?.isEnabled || false,
+          sms: req.user.twoFactorAuth.sms?.isEnabled || false
+        }
+      });
+    }
+
+    next();
+  } catch (error) {
+    return res.status(403).json({ 
+      success: false, 
+      message: 'Invalid token' 
+    });
+  }
+};
+
+// Middleware to handle 2FA attempt tracking
+const track2FAAttempts = async (req, res, next) => {
+  const originalSend = res.send;
+  
+  res.send = function(data) {
+    // Check if this was a failed 2FA verification
+    if (res.statusCode === 400 || res.statusCode === 401) {
+      const responseData = typeof data === 'string' ? JSON.parse(data) : data;
+      
+      if (responseData && responseData.message && responseData.message.includes('2FA') && req.user) {
+        // Track failed attempt asynchronously
+        process.nextTick(async () => {
+          try {
+            const user = await User.findById(req.user._id);
+            if (user && user.twoFactorAuth?.isEnabled) {
+              const maxAttempts = 5;
+              const lockDuration = 30; // minutes
+              
+              if (!user.twoFactorAuth.failedAttempts) {
+                user.twoFactorAuth.failedAttempts = 0;
+              }
+              
+              user.twoFactorAuth.failedAttempts += 1;
+              user.twoFactorAuth.lastFailedAttempt = new Date();
+              
+              // Lock account if max attempts reached
+              if (user.twoFactorAuth.failedAttempts >= maxAttempts) {
+                user.twoFactorAuth.isLocked = true;
+                user.twoFactorAuth.lockUntil = new Date(Date.now() + (lockDuration * 60 * 1000));
+              }
+              
+              await user.save();
+            }
+          } catch (error) {
+            console.error('Error tracking 2FA attempts:', error);
+          }
+        });
+      }
+    } else if (res.statusCode === 200 && req.user) {
+      // Reset failed attempts on successful verification
+      process.nextTick(async () => {
+        try {
+          const user = await User.findById(req.user._id);
+          if (user && user.twoFactorAuth?.isEnabled && user.twoFactorAuth.failedAttempts > 0) {
+            user.twoFactorAuth.failedAttempts = 0;
+            user.twoFactorAuth.isLocked = false;
+            user.twoFactorAuth.lockUntil = null;
+            user.twoFactorAuth.lastFailedAttempt = null;
+            await user.save();
+          }
+        } catch (error) {
+          console.error('Error resetting 2FA attempts:', error);
+        }
+      });
+    }
+    
+    originalSend.call(this, data);
+  };
+  
+  next();
 };
 
 // Middleware to check if user has required role(s)
@@ -177,6 +300,8 @@ const authRateLimit = (maxAttempts = 5, windowMs = 15 * 60 * 1000) => {
 
 module.exports = {
   authenticateToken,
+  require2FA,
+  track2FAAttempts,
   authorizeRoles,
   requireAdmin,
   requireVendorOrAdmin,
