@@ -80,17 +80,32 @@ const userSchema = new mongoose.Schema({
       type: String,
       select: false
     },
-    backupCodes: [{
-      code: {
-        type: String,
-        select: false
+    backupCodes: {
+      type: [{
+        code: {
+          type: String,
+          select: false,
+          validate: {
+            validator: function(v) {
+              return /^[A-F0-9]{8}$/.test(v);
+            },
+            message: 'Backup code must be 8 uppercase hexadecimal characters'
+          }
+        },
+        used: {
+          type: Boolean,
+          default: false
+        },
+        usedAt: Date
+      }],
+      validate: {
+        validator: function(v) {
+          return v.length >= 1 && v.length <= 20;
+        },
+        message: 'Backup codes array must contain between 1 and 20 codes'
       },
-      used: {
-        type: Boolean,
-        default: false
-      },
-      usedAt: Date
-    }],
+      default: []
+    },
     enabledAt: Date,
     lastUsed: Date
   },
@@ -444,9 +459,19 @@ userSchema.statics.findByCredentials = async function(email, password) {
   return user;
 };
 
-// Static method to get users by role
+// Static method to get users by role with safe projection
 userSchema.statics.findByRole = function(role) {
-  return this.find({ role, isActive: true });
+  return this.find({ role, isActive: true }).select('-password -twoFactor.secret');
+};
+
+// Static method to find by ID with safe projection (for non-authentication queries)
+userSchema.statics.findByIdSafe = function(id) {
+  return this.findById(id).select('-password -twoFactor.secret');
+};
+
+// Static method to find one with safe projection (for non-authentication queries)
+userSchema.statics.findOneSafe = function(query) {
+  return this.findOne(query).select('-password -twoFactor.secret');
 };
 
 // Remove sensitive data from JSON output
